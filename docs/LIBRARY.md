@@ -170,7 +170,7 @@ type URLIterator struct {
 func (it *URLIterator) Next() string {
 	for {
 		pos := atomic.AddUint64(&it.pos, 1)
-		if pos >= uint64(len(it.data)) {
+		if pos > uint64(len(it.data)) {
 			if !atomic.CompareAndSwapUint64(&it.pos, pos, 0) {
 				// retry
 				continue

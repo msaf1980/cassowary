@@ -86,7 +86,7 @@ type URLIterator struct {
 func (it *URLIterator) Next() string {
 	for {
 		pos := atomic.AddUint64(&it.pos, 1)
-		if pos >= uint64(len(it.data)) {
+		if pos > uint64(len(it.data)) {
 			if !atomic.CompareAndSwapUint64(&it.pos, pos, 0) {
 				// retry
 				continue
@@ -118,7 +118,7 @@ func TestLoadCoordinateURLIterator(t *testing.T) {
 	cass := Cassowary{
 		BaseURL:               srv.URL,
 		ConcurrencyLevel:      1,
-		Requests:              30,
+		Requests:              32,
 		FileMode:              true,
 		URLIterator:           it,
 		DisableTerminalOutput: true,
@@ -131,8 +131,8 @@ func TestLoadCoordinateURLIterator(t *testing.T) {
 		t.Errorf("Wanted %s but got %s", srv.URL, metrics.BaseURL)
 	}
 
-	if metrics.TotalRequests != 30 {
-		t.Errorf("Wanted %d but got %d", 1, metrics.TotalRequests)
+	if metrics.TotalRequests != 32 {
+		t.Errorf("Wanted %d but got %d", 32, metrics.TotalRequests)
 	}
 
 	if metrics.FailedRequests != 0 {
