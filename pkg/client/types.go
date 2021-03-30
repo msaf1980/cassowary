@@ -25,6 +25,7 @@ type Cassowary struct {
 	PromURL               string
 	RequestHeader         []string
 	URLPaths              []string
+	URLIterator           Iterator
 	DisableTerminalOutput bool
 	DisableKeepAlive      bool
 	Client                *http.Client

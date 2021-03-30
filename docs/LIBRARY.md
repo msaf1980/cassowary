@@ -146,3 +146,75 @@ func main() {
 }
 
 ```
+
+**Example 4: Load Test an URL across multiple URL paths with iterator**  
+
+The following code will make 30 requests across the 3 URL paths declared in the URLPaths field:
+
+```go
+package main
+
+import (
+        "encoding/json"
+	"fmt"
+
+	cassowary "github.com/rogerwelin/cassowary/pkg/client"
+)
+
+
+type URLIterator struct {
+	pos  uint64
+	data []string
+}
+
+func (it *URLIterator) Next() string {
+	for {
+		pos := atomic.AddUint64(&it.pos, 1)
+		if pos >= uint64(len(it.data)) {
+			if !atomic.CompareAndSwapUint64(&it.pos, pos, 0) {
+				// retry
+				continue
+			}
+			pos = 0
+		} else {
+			pos--
+		}
+		return it.data[pos]
+	}
+}
+
+func NewURLIterator(data []string) *URLIterator {
+	if len(data) == 0 {
+		return nil
+	}
+	return &URLIterator{data: data, pos: 0}
+}
+
+func main() {
+	it := cassowary.NewURLIterator([]string{"/test1", "/test2", "/test3"})
+
+	cass := &cassowary.Cassowary{
+		BaseURL:               "http://www.example.com",
+		ConcurrencyLevel:      2,
+		Requests:              30,
+		FileMode:	       	   true,
+		URLIterator:           it,
+		DisableTerminalOutput: true,
+	}
+	metrics, err := cass.Coordinate()
+	if err != nil {
+		panic(err)
+	}
+
+        // print results
+	fmt.Printf("%+v\n", metrics)
+
+        // or print as json
+	jsonMetrics, err := json.Marshal(metrics)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println(string(jsonMetrics))
+}
+```

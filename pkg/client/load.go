@@ -149,6 +149,18 @@ func (c *Cassowary) Coordinate() (ResultMetrics, error) {
 	var statusCodes []int
 	var totalDur []float64
 
+	if c.FileMode {
+		if (len(c.URLPaths) > 0 && c.URLIterator != nil) || (len(c.URLPaths) == 0 && c.URLIterator == nil) {
+			return ResultMetrics{}, fmt.Errorf("use URLPaths or URLIterator in FileMode")
+		}
+		if len(c.URLPaths) > 0 {
+			if c.Requests > len(c.URLPaths) {
+				c.URLPaths = generateSuffixes(c.URLPaths, c.Requests)
+			}
+			c.Requests = len(c.URLPaths)
+		}
+	}
+
 	tls, err := isTLS(c.BaseURL)
 	if err != nil {
 		return ResultMetrics{}, err
@@ -163,13 +175,6 @@ func (c *Cassowary) Coordinate() (ResultMetrics, error) {
 			DisableCompression:  false,
 			DisableKeepAlives:   c.DisableKeepAlive,
 		},
-	}
-
-	if c.FileMode {
-		if c.Requests > len(c.URLPaths) {
-			c.URLPaths = generateSuffixes(c.URLPaths, c.Requests)
-		}
-		c.Requests = len(c.URLPaths)
 	}
 
 	c.Bar = progressbar.New(c.Requests)
@@ -210,8 +215,12 @@ func (c *Cassowary) Coordinate() (ResultMetrics, error) {
 					return
 				case _ = <-ticker.C:
 					if c.FileMode {
-						workerChan <- c.URLPaths[iter]
-						iter++
+						if c.URLIterator == nil {
+							workerChan <- c.URLPaths[iter]
+							iter++
+						} else {
+							workerChan <- c.URLIterator.Next()
+						}
 					} else {
 						workerChan <- "a"
 					}
@@ -222,13 +231,17 @@ func (c *Cassowary) Coordinate() (ResultMetrics, error) {
 		time.Sleep(time.Duration(durationMS) * time.Millisecond)
 		ticker.Stop()
 		done <- true
-	}
-
-	if c.Duration == 0 && c.FileMode {
-		for _, line := range c.URLPaths {
-			workerChan <- line
+	} else if c.FileMode {
+		if c.URLIterator == nil {
+			for _, line := range c.URLPaths {
+				workerChan <- line
+			}
+		} else {
+			for i := 0; i < c.Requests; i++ {
+				workerChan <- c.URLIterator.Next()
+			}
 		}
-	} else if c.Duration == 0 && !c.FileMode {
+	} else {
 		for i := 0; i < c.Requests; i++ {
 			workerChan <- "a"
 		}
