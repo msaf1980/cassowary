@@ -13,7 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/cloudwatch"
 	"github.com/fatih/color"
-	"github.com/rogerwelin/cassowary/pkg/client"
+	"github.com/msaf1980/cassowary/pkg/client"
 	"github.com/urfave/cli/v2"
 )
 
