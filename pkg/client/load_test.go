@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync/atomic"
 	"testing"
 )
@@ -62,19 +63,19 @@ func TestLoadCoordinateURLPaths(t *testing.T) {
 		t.Error(err)
 	}
 	if metrics.BaseURL != srv.URL {
-		t.Errorf("Wanted %s but got %s", srv.URL, metrics.BaseURL)
+		t.Errorf("Wanted %s baseURL, but got %s", srv.URL, metrics.BaseURL)
 	}
 
 	if metrics.TotalRequests != 30 {
-		t.Errorf("Wanted %d but got %d", 1, metrics.TotalRequests)
+		t.Errorf("Wanted %d total, but got %d", 1, metrics.TotalRequests)
 	}
 
 	if metrics.FailedRequests != 0 {
-		t.Errorf("Wanted %d but got %d", 0, metrics.FailedRequests)
+		t.Errorf("Wanted %d failed, but got %d", 0, metrics.FailedRequests)
 	}
 
 	if len(cass.URLPaths) != 30 {
-		t.Errorf("Wanted %d but got %d", 30, len(cass.URLPaths))
+		t.Errorf("Wanted %d URLPaths, but got %d", 30, len(cass.URLPaths))
 	}
 }
 
@@ -82,6 +83,7 @@ type URLIterator struct {
 	baseURL string
 	pos     uint64
 	data    []string
+	v       Validator
 }
 
 func (it *URLIterator) Next() *Query {
@@ -97,7 +99,7 @@ func (it *URLIterator) Next() *Query {
 			pos--
 		}
 		//return &Query{Method: "GET", URL: it.baseURL + it.data[pos]}
-		return &Query{Method: "POST", URL: it.baseURL + it.data[pos], DataType: "application/json", Data: []byte("{ \"test\": \"POST\" }")}
+		return &Query{Method: "POST", URL: it.baseURL + it.data[pos], DataType: "application/json", Data: []byte("{ \"test\": \"POST\" }"), Validator: it.v}
 	}
 }
 
@@ -129,12 +131,87 @@ func TestLoadCoordinateURLIterator(t *testing.T) {
 		t.Error(err)
 	}
 
-	if metrics.TotalRequests != 32 {
-		t.Errorf("Wanted %d but got %d", 32, metrics.TotalRequests)
+	if metrics.TotalRequests != cass.Requests {
+		t.Errorf("Wanted %d total, but got %d", cass.Requests, metrics.TotalRequests)
 	}
 
 	if metrics.FailedRequests != 0 {
-		t.Errorf("Wanted %d but got %d", 0, metrics.FailedRequests)
+		t.Errorf("Wanted %d failed, but got %d", 0, metrics.FailedRequests)
+	}
+
+	if len(metrics.RespSuccess) != 1 {
+		t.Errorf("Wanted 1 total failed status code, but got %d", len(metrics.RespSuccess))
+	}
+	if count, ok := metrics.RespSuccess["200"]; ok {
+		if count != metrics.TotalRequests {
+			t.Errorf("Wanted %d total success status code, but got %d", metrics.TotalRequests, count)
+		}
+	} else {
+		t.Errorf("Wanted %d total success status code, but got %d", metrics.TotalRequests, 0)
+	}
+	if len(metrics.RespFailed) != 0 {
+		t.Errorf("Wanted 0 total failed, but got %d", len(metrics.RespFailed))
+	}
+}
+
+func respHTTPValidator(statusCode int, respSize int64, resp []byte, err error) (bool, string) {
+	if err != nil {
+		return true, err.Error()
+	} else if statusCode > 226 {
+		return true, strconv.Itoa(statusCode)
+	} else {
+		return false, strconv.Itoa(statusCode)
+	}
+}
+
+func NewURLIteratorWithValidator(baseURL string, data []string, v Validator) *URLIterator {
+	if len(data) == 0 {
+		return nil
+	}
+	return &URLIterator{baseURL: baseURL, data: data, pos: 0, v: v}
+}
+
+func TestLoadCoordinateURLIteratorWithValidator(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(503)
+		w.Write([]byte("error"))
+	}))
+	defer srv.Close()
+
+	it := NewURLIteratorWithValidator(srv.URL, []string{"/test1", "/test2", "/test3"}, respHTTPValidator)
+
+	cass := Cassowary{
+		ConcurrencyLevel:      1,
+		Requests:              32,
+		FileMode:              true,
+		URLIterator:           it,
+		DisableTerminalOutput: true,
+	}
+	metrics, err := cass.Coordinate()
+	if err != nil {
+		t.Error(err)
+	}
+
+	if metrics.TotalRequests != cass.Requests {
+		t.Errorf("Wanted %d total, but got %d", cass.Requests, metrics.TotalRequests)
+	}
+
+	if metrics.FailedRequests != metrics.TotalRequests {
+		t.Errorf("Wanted %d failed, but got %d", 0, metrics.FailedRequests)
+	}
+
+	if len(metrics.RespSuccess) != 0 {
+		t.Errorf("Wanted 0 total failed status code, but got %d", len(metrics.RespSuccess))
+	}
+	if len(metrics.RespFailed) != 1 {
+		t.Errorf("Wanted 1 total failed status code, but got %d", len(metrics.RespFailed))
+	}
+	if count, ok := metrics.RespFailed["503"]; ok {
+		if count != metrics.FailedRequests {
+			t.Errorf("Wanted %d total failed status code, but got %d", metrics.FailedRequests, count)
+		}
+	} else {
+		t.Errorf("Wanted %d total failed status code, but got %d", metrics.FailedRequests, 0)
 	}
 }
 

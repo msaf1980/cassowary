@@ -7,12 +7,16 @@ import (
 	"github.com/schollz/progressbar"
 )
 
+// Validator(statusCode int, respSize int64, resp []byte, err error) (failed ool, statusCode string)
+type Validator func(int, int64, []byte, error) (bool, string)
+
 type Query struct {
 	Method         string
 	URL            string
 	DataType       string
 	Data           []byte // Body
 	RequestHeaders [][2]string
+	Validator      Validator
 }
 
 // Cassowary is the main struct with bootstraps the load test

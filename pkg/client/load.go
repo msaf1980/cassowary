@@ -26,7 +26,7 @@ type durationMetrics struct {
 	TLSHandshake     float64
 	ServerProcessing float64
 	ContentTransfer  float64
-	StatusCode       int
+	StatusCode       string
 	Failed           bool
 	TotalDuration    float64
 	BodySize         int
@@ -117,18 +117,28 @@ func (c *Cassowary) runLoadTest(outPutChan chan<- durationMetrics, workerChan ch
 		}
 
 		failed := false
-		if resp.StatusCode > 226 {
-			failed = true
+		var statusCode string
+		if u.Validator == nil {
+			if err != nil {
+				statusCode = err.Error()
+			} else {
+				if resp.StatusCode > 226 {
+					failed = true
+				}
+				statusCode = strconv.Itoa(resp.StatusCode)
+			}
+		} else {
+			failed, statusCode = u.Validator(resp.StatusCode, respSize, nil, err)
 		}
 
 		out := durationMetrics{
-			Method:    u.Method,
-			URL:       u.URL,
-			DNSLookup: float64(t1.Sub(t0) / time.Millisecond), // dns lookup
-			//TCPConn:          float64(t3.Sub(t1) / time.Millisecond), // tcp connection
+			Method:           u.Method,
+			URL:              u.URL,
+			DNSLookup:        float64(t1.Sub(t0) / time.Millisecond), // dns lookup
+			TCPConn:          float64(t3.Sub(t1) / time.Millisecond), // tcp connection
 			ServerProcessing: float64(t4.Sub(t3) / time.Millisecond), // server processing
 			ContentTransfer:  float64(t7.Sub(t4) / time.Millisecond), // content transfer
-			StatusCode:       resp.StatusCode,
+			StatusCode:       statusCode,
 			BodySize:         len(u.Data),
 			ResponseSize:     respSize,
 			Failed:           failed,
@@ -154,7 +164,6 @@ func (c *Cassowary) Coordinate() (ResultMetrics, error) {
 	var tlsDur []float64
 	var serverDur []float64
 	var transferDur []float64
-	var statusCodes []int
 	var totalDur []float64
 	var bodySize []float64
 	var respSize []float64
@@ -282,9 +291,9 @@ func (c *Cassowary) Coordinate() (ResultMetrics, error) {
 		if item.Failed {
 			// Failed Requests
 			failedR++
-			failedMap[strconv.Itoa(item.StatusCode)]++
+			failedMap[item.StatusCode]++
 		} else {
-			successMap[strconv.Itoa(item.StatusCode)]++
+			successMap[item.StatusCode]++
 			bodySize = append(bodySize, float64(item.BodySize))
 			respSize = append(respSize, float64(item.ResponseSize))
 		}
@@ -299,7 +308,6 @@ func (c *Cassowary) Coordinate() (ResultMetrics, error) {
 		}
 		serverDur = append(serverDur, item.ServerProcessing)
 		transferDur = append(transferDur, item.ContentTransfer)
-		statusCodes = append(statusCodes, item.StatusCode)
 		totalDur = append(totalDur, item.TotalDuration)
 	}
 
