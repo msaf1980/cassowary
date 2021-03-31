@@ -18,6 +18,8 @@ import (
 )
 
 type durationMetrics struct {
+	Method           string
+	URL              string
 	DNSLookup        float64
 	TCPConn          float64
 	TLSHandshake     float64
@@ -25,48 +27,41 @@ type durationMetrics struct {
 	ContentTransfer  float64
 	StatusCode       int
 	TotalDuration    float64
+	BodySize         int
+	ResponseSize     int64
 }
 
-func (c *Cassowary) runLoadTest(outPutChan chan<- durationMetrics, workerChan chan string) {
-	for URLitem := range workerChan {
+func (c *Cassowary) runLoadTest(outPutChan chan<- durationMetrics, workerChan chan *Query) {
+	for u := range workerChan {
 
 		var request *http.Request
 		var err error
 
-		if c.FileMode {
-			request, err = http.NewRequest("GET", c.BaseURL+URLitem, nil)
+		switch c.HTTPMethod {
+		case "GET":
+			request, err = http.NewRequest(u.Method, u.URL, nil)
 			if err != nil {
 				log.Fatalf("%v", err)
 			}
-		} else {
-			switch c.HTTPMethod {
-			case "POST":
-				request, err = http.NewRequest("POST", c.BaseURL, bytes.NewBuffer(c.Data))
-				request.Header.Set("Content-Type", "application/json")
-				if err != nil {
-					log.Fatalf("%v", err)
-				}
-			case "PUT":
-				request, err = http.NewRequest("PUT", c.BaseURL, bytes.NewBuffer(c.Data))
-				request.Header.Set("Content-Type", "application/json")
-				if err != nil {
-					log.Fatalf("%v", err)
-				}
-			case "PATCH":
-				request, err = http.NewRequest("PATCH", c.BaseURL, bytes.NewBuffer(c.Data))
-				request.Header.Set("Content-Type", "application/json")
-				if err != nil {
-					log.Fatalf("%v", err)
-				}
-			default:
-				request, err = http.NewRequest("GET", c.BaseURL, nil)
-				if err != nil {
-					log.Fatalf("%v", err)
-				}
+		default:
+			if len(u.Data) > 0 {
+				request, err = http.NewRequest(u.Method, u.URL, bytes.NewBuffer(u.Data))
+			} else {
+				request, err = http.NewRequest(u.Method, u.URL, nil)
+			}
+			if err != nil {
+				log.Fatalf("%v", err)
+			}
+			//request.Header.Set("Content-Type", "application/json")
+			if len(u.Data) > 0 {
+				request.Header.Set("Content-Type", u.DataType)
 			}
 		}
 
-		if len(c.RequestHeader) == 2 {
+		for _, h := range u.RequestHeaders {
+			request.Header.Add(h[0], h[1])
+		}
+		if !c.FileMode && len(c.RequestHeader) == 2 {
 			request.Header.Add(c.RequestHeader[0], c.RequestHeader[1])
 		}
 
@@ -99,8 +94,9 @@ func (c *Cassowary) runLoadTest(outPutChan chan<- durationMetrics, workerChan ch
 		if err != nil {
 			log.Fatalf("%v", err)
 		}
+		var respSize int64
 		if resp != nil {
-			_, err = io.Copy(ioutil.Discard, resp.Body)
+			respSize, err = io.Copy(ioutil.Discard, resp.Body)
 			if err != nil {
 				fmt.Println("Failed to read HTTP response body", err)
 			}
@@ -119,11 +115,15 @@ func (c *Cassowary) runLoadTest(outPutChan chan<- durationMetrics, workerChan ch
 		}
 
 		out := durationMetrics{
+			Method:    u.Method,
+			URL:       u.URL,
 			DNSLookup: float64(t1.Sub(t0) / time.Millisecond), // dns lookup
 			//TCPConn:          float64(t3.Sub(t1) / time.Millisecond), // tcp connection
 			ServerProcessing: float64(t4.Sub(t3) / time.Millisecond), // server processing
 			ContentTransfer:  float64(t7.Sub(t4) / time.Millisecond), // content transfer
 			StatusCode:       resp.StatusCode,
+			BodySize:         len(u.Data),
+			ResponseSize:     respSize,
 		}
 
 		if c.IsTLS {
@@ -186,7 +186,7 @@ func (c *Cassowary) Coordinate() (ResultMetrics, error) {
 
 	var wg sync.WaitGroup
 	channel := make(chan durationMetrics, c.Requests)
-	workerChan := make(chan string)
+	workerChan := make(chan *Query, c.ConcurrencyLevel)
 
 	wg.Add(c.ConcurrencyLevel)
 	start := time.Now()
@@ -216,13 +216,17 @@ func (c *Cassowary) Coordinate() (ResultMetrics, error) {
 				case _ = <-ticker.C:
 					if c.FileMode {
 						if c.URLIterator == nil {
-							workerChan <- c.URLPaths[iter]
+							workerChan <- &Query{Method: "GET", URL: c.BaseURL + c.URLPaths[iter]}
 							iter++
 						} else {
 							workerChan <- c.URLIterator.Next()
 						}
 					} else {
-						workerChan <- "a"
+						if c.HTTPMethod == "GET" || len(c.Data) == 0 {
+							workerChan <- &Query{Method: c.HTTPMethod, URL: c.BaseURL}
+						} else {
+							workerChan <- &Query{Method: c.HTTPMethod, URL: c.BaseURL, DataType: "application/json", Data: c.Data}
+						}
 					}
 				}
 			}
@@ -234,7 +238,7 @@ func (c *Cassowary) Coordinate() (ResultMetrics, error) {
 	} else if c.FileMode {
 		if c.URLIterator == nil {
 			for _, line := range c.URLPaths {
-				workerChan <- line
+				workerChan <- &Query{Method: "GET", URL: c.BaseURL + line}
 			}
 		} else {
 			for i := 0; i < c.Requests; i++ {
@@ -243,7 +247,11 @@ func (c *Cassowary) Coordinate() (ResultMetrics, error) {
 		}
 	} else {
 		for i := 0; i < c.Requests; i++ {
-			workerChan <- "a"
+			if c.HTTPMethod == "GET" || len(c.Data) == 0 {
+				workerChan <- &Query{Method: c.HTTPMethod, URL: c.BaseURL}
+			} else {
+				workerChan <- &Query{Method: c.HTTPMethod, URL: c.BaseURL, DataType: "application/json", Data: c.Data}
+			}
 		}
 	}
 

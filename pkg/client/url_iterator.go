@@ -1,5 +1,5 @@
 package client
 
 type Iterator interface {
-	Next() string
+	Next() *Query
 }

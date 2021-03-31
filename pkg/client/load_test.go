@@ -79,11 +79,12 @@ func TestLoadCoordinateURLPaths(t *testing.T) {
 }
 
 type URLIterator struct {
-	pos  uint64
-	data []string
+	baseURL string
+	pos     uint64
+	data    []string
 }
 
-func (it *URLIterator) Next() string {
+func (it *URLIterator) Next() *Query {
 	for {
 		pos := atomic.AddUint64(&it.pos, 1)
 		if pos > uint64(len(it.data)) {
@@ -95,15 +96,16 @@ func (it *URLIterator) Next() string {
 		} else {
 			pos--
 		}
-		return it.data[pos]
+		//return &Query{Method: "GET", URL: it.baseURL + it.data[pos]}
+		return &Query{Method: "POST", URL: it.baseURL + it.data[pos], DataType: "application/json", Data: []byte("{ \"test\": \"POST\" }")}
 	}
 }
 
-func NewURLIterator(data []string) *URLIterator {
+func NewURLIterator(baseURL string, data []string) *URLIterator {
 	if len(data) == 0 {
 		return nil
 	}
-	return &URLIterator{data: data, pos: 0}
+	return &URLIterator{baseURL: baseURL, data: data, pos: 0}
 }
 
 func TestLoadCoordinateURLIterator(t *testing.T) {
@@ -113,10 +115,9 @@ func TestLoadCoordinateURLIterator(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	it := NewURLIterator([]string{"/test1", "/test2", "/test3"})
+	it := NewURLIterator(srv.URL, []string{"/test1", "/test2", "/test3"})
 
 	cass := Cassowary{
-		BaseURL:               srv.URL,
 		ConcurrencyLevel:      1,
 		Requests:              32,
 		FileMode:              true,
@@ -126,9 +127,6 @@ func TestLoadCoordinateURLIterator(t *testing.T) {
 	metrics, err := cass.Coordinate()
 	if err != nil {
 		t.Error(err)
-	}
-	if metrics.BaseURL != srv.URL {
-		t.Errorf("Wanted %s but got %s", srv.URL, metrics.BaseURL)
 	}
 
 	if metrics.TotalRequests != 32 {

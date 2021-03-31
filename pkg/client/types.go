@@ -7,6 +7,14 @@ import (
 	"github.com/schollz/progressbar"
 )
 
+type Query struct {
+	Method         string
+	URL            string
+	DataType       string
+	Data           []byte // Body
+	RequestHeaders [][2]string
+}
+
 // Cassowary is the main struct with bootstraps the load test
 type Cassowary struct {
 	FileMode              bool
