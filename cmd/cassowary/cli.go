@@ -9,6 +9,7 @@ import (
 	"io/ioutil"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/cloudwatch"
@@ -116,7 +117,7 @@ func validateCLI(c *cli.Context) error {
 	var header []string
 	var httpMethod string
 	var data []byte
-	duration := 0
+	var duration time.Duration
 	var urlSuffixes []string
 	fileMode := false
 
@@ -130,7 +131,7 @@ func validateCLI(c *cli.Context) error {
 
 	if c.String("duration") != "" {
 		var err error
-		duration, err = strconv.Atoi(c.String("duration"))
+		duration, err = time.ParseDuration(c.String("duration"))
 		if err != nil {
 			return err
 		}
@@ -211,12 +212,7 @@ func validateCLI(c *cli.Context) error {
 	}
 
 	cass := &client.Cassowary{
-		FileMode:          fileMode,
 		BaseURL:           c.String("url"),
-		ConcurrencyLevel:  c.Int("concurrency"),
-		Requests:          c.Int("requests"),
-		RequestHeader:     header,
-		Duration:          duration,
 		PromExport:        prometheusEnabled,
 		TLSConfig:         tlsConfig,
 		PromURL:           c.String("prompushgwurl"),
@@ -227,9 +223,19 @@ func validateCLI(c *cli.Context) error {
 		ExportMetricsFile: c.String("json-metrics-file"),
 		DisableKeepAlive:  c.Bool("disable-keep-alive"),
 		Timeout:           c.Int("timeout"),
-		HTTPMethod:        httpMethod,
-		URLPaths:          urlSuffixes,
-		Data:              data,
+		Duration:          duration,
+		Groups: []client.QueryGroup{
+			{
+				Name:             "default",
+				Method:           httpMethod,
+				URLPaths:         urlSuffixes,
+				Data:             data,
+				FileMode:         fileMode,
+				ConcurrencyLevel: c.Int("concurrency"),
+				Requests:         c.Int("requests"),
+				RequestHeader:    header,
+			},
+		},
 	}
 
 	return runLoadTest(cass)
@@ -274,7 +280,7 @@ func runCLI(args []string) {
 				&cli.StringFlag{
 					Name:    "d",
 					Aliases: []string{"duration"},
-					Usage:   "set the duration in seconds of the load test (example: do 100 requests in a duration of 30s)",
+					Usage:   "set the duration of the load test (example: do 100 requests in a duration of 30s)",
 				},
 				&cli.IntFlag{
 					Name:    "t",

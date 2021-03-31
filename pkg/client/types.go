@@ -3,8 +3,11 @@ package client
 import (
 	"crypto/tls"
 	"net/http"
+	"sync"
+	"time"
 
 	"github.com/schollz/progressbar"
+	"go.uber.org/ratelimit"
 )
 
 // Validator(statusCode int, respSize int64, resp []byte, err error) (failed ool, statusCode string)
@@ -19,14 +22,30 @@ type Query struct {
 	Validator      Validator
 }
 
+type QueryGroup struct {
+	Name string
+
+	ConcurrencyLevel int
+	Delay            time.Duration
+	Requests         int
+
+	l ratelimit.Limiter
+
+	FileMode    bool
+	URLPaths    []string
+	URLIterator Iterator
+
+	Method        string
+	Data          []byte
+	RequestHeader []string
+
+	workerChan chan *Query
+}
+
 // Cassowary is the main struct with bootstraps the load test
 type Cassowary struct {
-	FileMode              bool
 	IsTLS                 bool
 	BaseURL               string
-	ConcurrencyLevel      int
-	Requests              int
-	Duration              int
 	ExportMetrics         bool
 	ExportMetricsFile     string
 	PromExport            bool
@@ -35,16 +54,17 @@ type Cassowary struct {
 	Boxplot               bool
 	TLSConfig             *tls.Config
 	PromURL               string
-	RequestHeader         []string
-	URLPaths              []string
-	URLIterator           Iterator
 	DisableTerminalOutput bool
 	DisableKeepAlive      bool
 	Client                *http.Client
 	Bar                   *progressbar.ProgressBar
 	Timeout               int
-	HTTPMethod            string
-	Data                  []byte
+
+	Duration time.Duration
+	Groups   []QueryGroup
+
+	wgStart sync.WaitGroup
+	wgStop  sync.WaitGroup
 }
 
 // ResultMetrics are the aggregated metrics after the load test

@@ -19,9 +19,14 @@ func TestLoadCoordinate(t *testing.T) {
 	defer srv.Close()
 
 	cass := Cassowary{
-		BaseURL:               srv.URL,
-		ConcurrencyLevel:      1,
-		Requests:              10,
+		BaseURL: srv.URL,
+		Groups: []QueryGroup{
+			{
+				Name:             "default",
+				ConcurrencyLevel: 1,
+				Requests:         10,
+			},
+		},
 		DisableTerminalOutput: true,
 	}
 
@@ -35,7 +40,7 @@ func TestLoadCoordinate(t *testing.T) {
 	}
 
 	if metrics.TotalRequests != 10 {
-		t.Errorf("Wanted %d but got %d", 1, metrics.TotalRequests)
+		t.Errorf("Wanted %d but got %d", 10, metrics.TotalRequests)
 	}
 
 	if metrics.FailedRequests != 0 {
@@ -51,11 +56,16 @@ func TestLoadCoordinateURLPaths(t *testing.T) {
 	defer srv.Close()
 
 	cass := Cassowary{
-		BaseURL:               srv.URL,
-		ConcurrencyLevel:      1,
-		Requests:              30,
-		FileMode:              true,
-		URLPaths:              []string{"/get_user", "/get_accounts", "/get_orders"},
+		BaseURL: srv.URL,
+		Groups: []QueryGroup{
+			{
+				Name:             "default",
+				ConcurrencyLevel: 1,
+				Requests:         30,
+				FileMode:         true,
+				URLPaths:         []string{"/get_user", "/get_accounts", "/get_orders"},
+			},
+		},
 		DisableTerminalOutput: true,
 	}
 	metrics, err := cass.Coordinate()
@@ -67,23 +77,18 @@ func TestLoadCoordinateURLPaths(t *testing.T) {
 	}
 
 	if metrics.TotalRequests != 30 {
-		t.Errorf("Wanted %d total, but got %d", 1, metrics.TotalRequests)
+		t.Errorf("Wanted %d total, but got %d", 30, metrics.TotalRequests)
 	}
 
 	if metrics.FailedRequests != 0 {
 		t.Errorf("Wanted %d failed, but got %d", 0, metrics.FailedRequests)
 	}
-
-	if len(cass.URLPaths) != 30 {
-		t.Errorf("Wanted %d URLPaths, but got %d", 30, len(cass.URLPaths))
-	}
 }
 
 type URLIterator struct {
-	baseURL string
-	pos     uint64
-	data    []string
-	v       Validator
+	pos  uint64
+	data []string
+	v    Validator
 }
 
 func (it *URLIterator) Next() *Query {
@@ -98,16 +103,16 @@ func (it *URLIterator) Next() *Query {
 		} else {
 			pos--
 		}
-		//return &Query{Method: "GET", URL: it.baseURL + it.data[pos]}
-		return &Query{Method: "POST", URL: it.baseURL + it.data[pos], DataType: "application/json", Data: []byte("{ \"test\": \"POST\" }"), Validator: it.v}
+		//return &Query{Method: "GET", URL: it.data[pos]}
+		return &Query{Method: "POST", URL: it.data[pos], DataType: "application/json", Data: []byte("{ \"test\": \"POST\" }"), Validator: it.v}
 	}
 }
 
-func NewURLIterator(baseURL string, data []string) *URLIterator {
+func NewURLIterator(data []string) *URLIterator {
 	if len(data) == 0 {
 		return nil
 	}
-	return &URLIterator{baseURL: baseURL, data: data, pos: 0}
+	return &URLIterator{data: data, pos: 0}
 }
 
 func TestLoadCoordinateURLIterator(t *testing.T) {
@@ -117,13 +122,26 @@ func TestLoadCoordinateURLIterator(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	it := NewURLIterator(srv.URL, []string{"/test1", "/test2", "/test3"})
+	it := NewURLIterator([]string{"/test1", "/test2", "/test3"})
 
 	cass := Cassowary{
-		ConcurrencyLevel:      1,
-		Requests:              32,
-		FileMode:              true,
-		URLIterator:           it,
+		BaseURL: srv.URL,
+		Groups: []QueryGroup{
+			{
+				Name:             "group_1",
+				ConcurrencyLevel: 2,
+				Requests:         32,
+				FileMode:         true,
+				URLIterator:      it,
+			},
+			{
+				Name:             "group_1",
+				ConcurrencyLevel: 1,
+				Requests:         10,
+				FileMode:         true,
+				URLIterator:      it,
+			},
+		},
 		DisableTerminalOutput: true,
 	}
 	metrics, err := cass.Coordinate()
@@ -131,8 +149,8 @@ func TestLoadCoordinateURLIterator(t *testing.T) {
 		t.Error(err)
 	}
 
-	if metrics.TotalRequests != cass.Requests {
-		t.Errorf("Wanted %d total, but got %d", cass.Requests, metrics.TotalRequests)
+	if metrics.TotalRequests != cass.Groups[0].Requests+cass.Groups[1].Requests {
+		t.Errorf("Wanted %d total, but got %d", cass.Groups[0].Requests+cass.Groups[1].Requests, metrics.TotalRequests)
 	}
 
 	if metrics.FailedRequests != 0 {
@@ -164,11 +182,11 @@ func respHTTPValidator(statusCode int, respSize int64, resp []byte, err error) (
 	}
 }
 
-func NewURLIteratorWithValidator(baseURL string, data []string, v Validator) *URLIterator {
+func NewURLIteratorWithValidator(data []string, v Validator) *URLIterator {
 	if len(data) == 0 {
 		return nil
 	}
-	return &URLIterator{baseURL: baseURL, data: data, pos: 0, v: v}
+	return &URLIterator{data: data, pos: 0, v: v}
 }
 
 func TestLoadCoordinateURLIteratorWithValidator(t *testing.T) {
@@ -178,13 +196,19 @@ func TestLoadCoordinateURLIteratorWithValidator(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	it := NewURLIteratorWithValidator(srv.URL, []string{"/test1", "/test2", "/test3"}, respHTTPValidator)
+	it := NewURLIteratorWithValidator([]string{"/test1", "/test2", "/test3"}, respHTTPValidator)
 
 	cass := Cassowary{
-		ConcurrencyLevel:      1,
-		Requests:              32,
-		FileMode:              true,
-		URLIterator:           it,
+		BaseURL: srv.URL,
+		Groups: []QueryGroup{
+			{
+				Name:             "default",
+				ConcurrencyLevel: 1,
+				Requests:         32,
+				FileMode:         true,
+				URLIterator:      it,
+			},
+		},
 		DisableTerminalOutput: true,
 	}
 	metrics, err := cass.Coordinate()
@@ -192,8 +216,8 @@ func TestLoadCoordinateURLIteratorWithValidator(t *testing.T) {
 		t.Error(err)
 	}
 
-	if metrics.TotalRequests != cass.Requests {
-		t.Errorf("Wanted %d total, but got %d", cass.Requests, metrics.TotalRequests)
+	if metrics.TotalRequests != cass.Groups[0].Requests {
+		t.Errorf("Wanted %d total, but got %d", cass.Groups[0].Requests, metrics.TotalRequests)
 	}
 
 	if metrics.FailedRequests != metrics.TotalRequests {
@@ -253,9 +277,13 @@ func TestCoordinateTLSConfig(t *testing.T) {
 	}
 
 	cass := Cassowary{
-		BaseURL:               srv.URL,
-		ConcurrencyLevel:      1,
-		Requests:              10,
+		BaseURL: srv.URL,
+		Groups: []QueryGroup{
+			{
+				ConcurrencyLevel: 1,
+				Requests:         10,
+			},
+		},
 		TLSConfig:             clientTLSConfig,
 		DisableTerminalOutput: true,
 	}
@@ -270,7 +298,7 @@ func TestCoordinateTLSConfig(t *testing.T) {
 	}
 
 	if metrics.TotalRequests != 10 {
-		t.Errorf("Wanted %d but got %d", 1, metrics.TotalRequests)
+		t.Errorf("Wanted %d but got %d", 10, metrics.TotalRequests)
 	}
 
 	if metrics.FailedRequests != 0 {

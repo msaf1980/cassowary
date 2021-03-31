@@ -22,8 +22,13 @@ import (
 func main() {
 	cass := &cassowary.Cassowary{
 		BaseURL:               "http://www.example.com",
-		ConcurrencyLevel:      1,
-		Requests:              10,
+		Groups: []QueryGroup{
+			{
+				Name:             "default",
+				ConcurrencyLevel:      1,
+				Requests:              10,
+			},
+		},
 		DisableTerminalOutput: true,
 	}
 	metrics, err := cass.Coordinate()
@@ -61,10 +66,14 @@ import (
 func main() {
 	cass := &cassowary.Cassowary{
 		BaseURL:               "http://www.example.com",
-		ConcurrencyLevel:      2,
-		Requests:              30,
-		FileMode:	       true,
-		URLPaths:	       []string{"/accounts", "/orders", "/customers"},
+		Groups: []QueryGroup{
+			{
+				ConcurrencyLevel:      2,
+				Requests:              30,
+				FileMode:	       true,
+				URLPaths:	       []string{"/accounts", "/orders", "/customers"},
+			},
+		},
 		DisableTerminalOutput: true,
 	}
 	metrics, err := cass.Coordinate()
@@ -123,8 +132,12 @@ func main() {
 
 	cass := &cassowary.Cassowary{
 		BaseURL:               "http://www.example.com",
-		ConcurrencyLevel:      1,
-		Requests:              10,
+		Groups: []QueryGroup{
+			{
+				ConcurrencyLevel:      1,
+				Requests:              10,
+			},
+		},
 		TLSConfig:             clientTLSConfig,
 		DisableTerminalOutput: true,
 	}

@@ -11,14 +11,18 @@ import (
 	"net/http"
 	"net/http/httptrace"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/fatih/color"
 	"github.com/schollz/progressbar"
+
+	//"github.com/schollz/progressbar"
+
+	"go.uber.org/ratelimit"
 )
 
 type durationMetrics struct {
+	Group            string
 	Method           string
 	URL              string
 	DNSLookup        float64
@@ -33,23 +37,23 @@ type durationMetrics struct {
 	ResponseSize     int64
 }
 
-func (c *Cassowary) runLoadTest(outPutChan chan<- durationMetrics, workerChan chan *Query) {
-	for u := range workerChan {
+func (c *Cassowary) runLoadTest(n int, outPutChan chan<- durationMetrics, g *QueryGroup) {
+	for u := range g.workerChan {
 
 		var request *http.Request
 		var err error
 
-		switch c.HTTPMethod {
+		switch u.Method {
 		case "GET":
-			request, err = http.NewRequest(u.Method, u.URL, nil)
+			request, err = http.NewRequest(u.Method, c.BaseURL+u.URL, nil)
 			if err != nil {
 				log.Fatalf("%v", err)
 			}
 		default:
 			if len(u.Data) > 0 {
-				request, err = http.NewRequest(u.Method, u.URL, bytes.NewBuffer(u.Data))
+				request, err = http.NewRequest(u.Method, c.BaseURL+u.URL, bytes.NewBuffer(u.Data))
 			} else {
-				request, err = http.NewRequest(u.Method, u.URL, nil)
+				request, err = http.NewRequest(u.Method, c.BaseURL+u.URL, nil)
 			}
 			if err != nil {
 				log.Fatalf("%v", err)
@@ -63,8 +67,8 @@ func (c *Cassowary) runLoadTest(outPutChan chan<- durationMetrics, workerChan ch
 		for _, h := range u.RequestHeaders {
 			request.Header.Add(h[0], h[1])
 		}
-		if !c.FileMode && len(c.RequestHeader) == 2 {
-			request.Header.Add(c.RequestHeader[0], c.RequestHeader[1])
+		if !g.FileMode && len(c.Groups[n].RequestHeader) == 2 {
+			request.Header.Add(g.RequestHeader[0], g.RequestHeader[1])
 		}
 
 		var t0, t1, t2, t3, t4, t5, t6 time.Time
@@ -106,7 +110,9 @@ func (c *Cassowary) runLoadTest(outPutChan chan<- durationMetrics, workerChan ch
 		}
 
 		if !c.DisableTerminalOutput {
-			c.Bar.Add(1)
+			if c.Bar != nil {
+				c.Bar.Add(1)
+			}
 		}
 
 		// Body fully read here
@@ -132,6 +138,7 @@ func (c *Cassowary) runLoadTest(outPutChan chan<- durationMetrics, workerChan ch
 		}
 
 		out := durationMetrics{
+			Group:            g.Name,
 			Method:           u.Method,
 			URL:              u.URL,
 			DNSLookup:        float64(t1.Sub(t0) / time.Millisecond), // dns lookup
@@ -154,6 +161,8 @@ func (c *Cassowary) runLoadTest(outPutChan chan<- durationMetrics, workerChan ch
 		out.TotalDuration = out.DNSLookup + out.TCPConn + out.ServerProcessing + out.ContentTransfer
 
 		outPutChan <- out
+
+		g.l.Take()
 	}
 }
 
@@ -168,17 +177,7 @@ func (c *Cassowary) Coordinate() (ResultMetrics, error) {
 	var bodySize []float64
 	var respSize []float64
 
-	if c.FileMode {
-		if (len(c.URLPaths) > 0 && c.URLIterator != nil) || (len(c.URLPaths) == 0 && c.URLIterator == nil) {
-			return ResultMetrics{}, fmt.Errorf("use URLPaths or URLIterator in FileMode")
-		}
-		if len(c.URLPaths) > 0 {
-			if c.Requests > len(c.URLPaths) {
-				c.URLPaths = generateSuffixes(c.URLPaths, c.Requests)
-			}
-			c.Requests = len(c.URLPaths)
-		}
-	}
+	var requests int
 
 	tls, err := isTLS(c.BaseURL)
 	if err != nil {
@@ -196,119 +195,165 @@ func (c *Cassowary) Coordinate() (ResultMetrics, error) {
 		},
 	}
 
-	c.Bar = progressbar.New(c.Requests)
+	for n := range c.Groups {
+		g := &(c.Groups[n])
+		if g.Requests > 0 && c.Duration > 0 && g.Delay == 0 {
+			rateLimit := int(float64(g.Requests) / float64(c.Duration.Seconds()))
+			if rateLimit <= 0 {
+				log.Fatalf("The combination of %v requests and %v(s) duration is invalid. Try raising the duration to a greater value", g.Requests, c.Duration)
+			}
+			fmt.Printf("QueryGroup %s with %d rps during %v\n", g.Name, rateLimit, c.Duration)
+			g.l = ratelimit.New(rateLimit)
+		} else if g.Delay > 0 && c.Duration > 0 && g.Requests == 0 {
+			fmt.Printf("QueryGroup %s with %v delay during %v\n", g.Name, g.Delay, c.Duration)
+			g.l = NewSleepLimited(g.Delay)
+		} else if c.Duration > 0 && g.Requests == 0 && g.Delay == 0 {
+			fmt.Printf("QueryGroup %s during %d s\n", g.Name, c.Duration)
+			g.l = ratelimit.NewUnlimited()
+		} else if c.Duration == 0 && g.Requests > 0 {
+			if g.Delay > 0 {
+				fmt.Printf("QueryGroup %s with %d requests and %v delay\n", g.Name, g.Requests, g.Delay)
+				g.l = NewSleepLimited(g.Delay)
+			} else {
+				fmt.Printf("QueryGroup %s with %d request\n", g.Name, g.Requests)
+				g.l = ratelimit.NewUnlimited()
+			}
+		} else {
+			log.Fatalf("The combination of %v requests, %v delay and %v(s) duration is invalid.", g.Requests, g.Delay, c.Duration)
+		}
 
-	if !c.DisableTerminalOutput {
-		col := color.New(color.FgCyan).Add(color.Underline)
-		col.Printf("\nStarting Load Test with %d requests using %d concurrent users\n\n", c.Requests, c.ConcurrencyLevel)
+		if g.FileMode {
+			if (len(g.URLPaths) > 0 && g.URLIterator != nil) || (len(g.URLPaths) == 0 && g.URLIterator == nil) {
+				return ResultMetrics{}, fmt.Errorf("use URLPaths or URLIterator in FileMode for %s group", g.Name)
+			}
+			// if len(g.URLPaths) > 0 {
+			// 	if g.Requests > len(g.URLPaths) {
+			// 		g.URLPaths = generateSuffixes(g.URLPaths, g.Requests)
+			// 	}
+			// 	g.Requests = len(g.URLPaths)
+			// }
+		}
+
+		g.workerChan = make(chan *Query, g.ConcurrencyLevel)
+
+		requests += g.Requests
+
+		if !c.DisableTerminalOutput {
+			col := color.New(color.FgCyan).Add(color.Underline)
+			col.Printf("Starting Load Test in QueryGroup %s using %d concurrent users\n", g.Name, g.ConcurrencyLevel)
+		}
 	}
 
-	var wg sync.WaitGroup
-	channel := make(chan durationMetrics, c.Requests)
-	workerChan := make(chan *Query, c.ConcurrencyLevel)
+	if requests > 0 {
+		c.Bar = progressbar.New(requests)
+	}
 
-	wg.Add(c.ConcurrencyLevel)
+	channel := make(chan durationMetrics, requests)
+
+	c.wgStart.Add(1)
+	for n := range c.Groups {
+		g := &(c.Groups[n])
+
+		c.wgStart.Add(g.ConcurrencyLevel)
+		c.wgStop.Add(g.ConcurrencyLevel)
+
+		for i := 0; i < g.ConcurrencyLevel; i++ {
+			go func() {
+				c.wgStart.Done()
+				c.wgStart.Wait()
+				defer c.wgStop.Done()
+				c.runLoadTest(n, channel, g)
+			}()
+		}
+
+	}
+
+	c.wgStart.Done()
+	c.wgStart.Wait()
+
 	start := time.Now()
 
-	for i := 0; i < c.ConcurrencyLevel; i++ {
+	for n := range c.Groups {
+		g := &(c.Groups[n])
 		go func() {
-			c.runLoadTest(channel, workerChan)
-			wg.Done()
-		}()
-	}
-
-	if c.Duration > 0 {
-		durationMS := c.Duration * 1000
-		nextTick := durationMS / c.Requests
-		ticker := time.NewTicker(time.Duration(nextTick) * time.Millisecond)
-		if nextTick == 0 {
-			log.Fatalf("The combination of %v requests and %v(s) duration is invalid. Try raising the duration to a greater value", c.Requests, c.Duration)
-		}
-		done := make(chan bool)
-		iter := 0
-
-		go func() {
+			iter := 0
+			reqs := g.Requests
+			start := time.Now()
 			for {
-				select {
-				case <-done:
-					return
-				case _ = <-ticker.C:
-					if c.FileMode {
-						if c.URLIterator == nil {
-							workerChan <- &Query{Method: "GET", URL: c.BaseURL + c.URLPaths[iter]}
+				if g.FileMode {
+					if g.URLIterator == nil {
+						g.workerChan <- &Query{Method: "GET", URL: g.URLPaths[iter]}
+						if iter < len(g.URLPaths)-1 {
 							iter++
 						} else {
-							workerChan <- c.URLIterator.Next()
+							iter = 0
 						}
 					} else {
-						if c.HTTPMethod == "GET" || len(c.Data) == 0 {
-							workerChan <- &Query{Method: c.HTTPMethod, URL: c.BaseURL}
-						} else {
-							workerChan <- &Query{Method: c.HTTPMethod, URL: c.BaseURL, DataType: "application/json", Data: c.Data}
-						}
+						g.workerChan <- g.URLIterator.Next()
+					}
+				} else {
+					if g.Method == "GET" || len(g.Data) == 0 {
+						g.workerChan <- &Query{Method: g.Method}
+					} else {
+						g.workerChan <- &Query{Method: g.Method, DataType: "application/json", Data: g.Data}
+					}
+				}
+
+				if g.Requests > 0 {
+					if reqs <= 1 {
+						break
+					}
+					reqs--
+				} else if c.Duration > 0 {
+					if time.Since(start) >= c.Duration {
+						break
 					}
 				}
 			}
+			close(g.workerChan)
 		}()
-
-		time.Sleep(time.Duration(durationMS) * time.Millisecond)
-		ticker.Stop()
-		done <- true
-	} else if c.FileMode {
-		if c.URLIterator == nil {
-			for _, line := range c.URLPaths {
-				workerChan <- &Query{Method: "GET", URL: c.BaseURL + line}
-			}
-		} else {
-			for i := 0; i < c.Requests; i++ {
-				workerChan <- c.URLIterator.Next()
-			}
-		}
-	} else {
-		for i := 0; i < c.Requests; i++ {
-			if c.HTTPMethod == "GET" || len(c.Data) == 0 {
-				workerChan <- &Query{Method: c.HTTPMethod, URL: c.BaseURL}
-			} else {
-				workerChan <- &Query{Method: c.HTTPMethod, URL: c.BaseURL, DataType: "application/json", Data: c.Data}
-			}
-		}
 	}
 
-	close(workerChan)
-	wg.Wait()
+	failedR := 0
+	totalR := 0
+	successMap := make(map[string]int)
+	failedMap := make(map[string]int)
+
+	go func() {
+		for item := range channel {
+			if item.Failed {
+				// Failed Requests
+				failedR++
+				failedMap[item.StatusCode]++
+			} else {
+				successMap[item.StatusCode]++
+				bodySize = append(bodySize, float64(item.BodySize))
+				respSize = append(respSize, float64(item.ResponseSize))
+			}
+			totalR++
+			if item.DNSLookup != 0 {
+				dnsDur = append(dnsDur, item.DNSLookup)
+			}
+			if item.TCPConn < 1000 {
+				tcpDur = append(tcpDur, item.TCPConn)
+			}
+			if c.IsTLS {
+				tlsDur = append(tlsDur, item.TLSHandshake)
+			}
+			serverDur = append(serverDur, item.ServerProcessing)
+			transferDur = append(transferDur, item.ContentTransfer)
+			totalDur = append(totalDur, item.TotalDuration)
+		}
+	}()
+
+	c.wgStop.Wait()
+	time.Sleep(100 * time.Millisecond)
+
 	close(channel)
 
 	end := time.Since(start)
 	if !c.DisableTerminalOutput {
 		fmt.Println(end)
-	}
-
-	failedR := 0
-	successMap := make(map[string]int)
-	failedMap := make(map[string]int)
-
-	for item := range channel {
-		if item.Failed {
-			// Failed Requests
-			failedR++
-			failedMap[item.StatusCode]++
-		} else {
-			successMap[item.StatusCode]++
-			bodySize = append(bodySize, float64(item.BodySize))
-			respSize = append(respSize, float64(item.ResponseSize))
-		}
-		if item.DNSLookup != 0 {
-			dnsDur = append(dnsDur, item.DNSLookup)
-		}
-		if item.TCPConn < 1000 {
-			tcpDur = append(tcpDur, item.TCPConn)
-		}
-		if c.IsTLS {
-			tlsDur = append(tlsDur, item.TLSHandshake)
-		}
-		serverDur = append(serverDur, item.ServerProcessing)
-		transferDur = append(transferDur, item.ContentTransfer)
-		totalDur = append(totalDur, item.TotalDuration)
 	}
 
 	// DNS
@@ -338,7 +383,7 @@ func (c *Cassowary) Coordinate() (ResultMetrics, error) {
 	resp95 := calc95Percentile(respSize)
 
 	// Request per second
-	reqS := requestsPerSecond(c.Requests, end)
+	reqS := requestsPerSecond(totalR, end)
 
 	outPut := ResultMetrics{
 		BaseURL:           c.BaseURL,
@@ -346,7 +391,7 @@ func (c *Cassowary) Coordinate() (ResultMetrics, error) {
 		RespSuccess:       successMap,
 		RespFailed:        failedMap,
 		RequestsPerSecond: reqS,
-		TotalRequests:     c.Requests,
+		TotalRequests:     totalR,
 		DNSMedian:         dnsMedian,
 		TCPStats: tcpStats{
 			TCPMean:   tcpMean,
