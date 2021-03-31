@@ -37,11 +37,29 @@ func outPutResults(metrics client.ResultMetrics) {
 		color.CyanString(fmt.Sprintf("%.2f", metrics.ContentStats.ContentTransferMean)),
 		color.CyanString(fmt.Sprintf("%.2f", metrics.ContentStats.ContentTransferMedian)),
 		color.CyanString(fmt.Sprintf("%.2f", metrics.ContentStats.ContentTransfer95p)),
+		color.CyanString(fmt.Sprintf("%.0f", metrics.BodySize.Mean)),
+		color.CyanString(fmt.Sprintf("%.0f", metrics.BodySize.Median)),
+		color.CyanString(fmt.Sprintf("%.0f", metrics.BodySize.P95)),
+		color.CyanString(fmt.Sprintf("%.0f", metrics.RespSize.Mean)),
+		color.CyanString(fmt.Sprintf("%.0f", metrics.RespSize.Median)),
+		color.CyanString(fmt.Sprintf("%.0f", metrics.RespSize.P95)),
 		color.CyanString(strconv.Itoa(metrics.TotalRequests)),
 		color.CyanString(strconv.Itoa(metrics.FailedRequests)),
 		color.CyanString(fmt.Sprintf("%.2f", metrics.DNSMedian)),
 		color.CyanString(fmt.Sprintf("%.2f", metrics.RequestsPerSecond)),
 	)
+	if len(metrics.RespSuccess) > 0 {
+		printf(color.GreenString("Success:\n"))
+		for status, count := range metrics.RespSuccess {
+			printf(color.GreenString(fmt.Sprintf("  %s: %d\n", status, count)))
+		}
+	}
+	if len(metrics.RespFailed) > 0 {
+		printf(color.RedString("Failed:\n"))
+		for status, count := range metrics.RespFailed {
+			printf(color.RedString(fmt.Sprintf("  %s: %d\n", status, count)))
+		}
+	}
 }
 
 func outPutJSON(fileName string, metrics client.ResultMetrics) error {

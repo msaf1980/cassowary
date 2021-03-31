@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptrace"
+	"strconv"
 	"sync"
 	"time"
 
@@ -26,6 +27,7 @@ type durationMetrics struct {
 	ServerProcessing float64
 	ContentTransfer  float64
 	StatusCode       int
+	Failed           bool
 	TotalDuration    float64
 	BodySize         int
 	ResponseSize     int64
@@ -114,6 +116,11 @@ func (c *Cassowary) runLoadTest(outPutChan chan<- durationMetrics, workerChan ch
 			t0 = t1
 		}
 
+		failed := false
+		if resp.StatusCode > 226 {
+			failed = true
+		}
+
 		out := durationMetrics{
 			Method:    u.Method,
 			URL:       u.URL,
@@ -124,6 +131,7 @@ func (c *Cassowary) runLoadTest(outPutChan chan<- durationMetrics, workerChan ch
 			StatusCode:       resp.StatusCode,
 			BodySize:         len(u.Data),
 			ResponseSize:     respSize,
+			Failed:           failed,
 		}
 
 		if c.IsTLS {
@@ -148,6 +156,8 @@ func (c *Cassowary) Coordinate() (ResultMetrics, error) {
 	var transferDur []float64
 	var statusCodes []int
 	var totalDur []float64
+	var bodySize []float64
+	var respSize []float64
 
 	if c.FileMode {
 		if (len(c.URLPaths) > 0 && c.URLIterator != nil) || (len(c.URLPaths) == 0 && c.URLIterator == nil) {
@@ -264,7 +274,20 @@ func (c *Cassowary) Coordinate() (ResultMetrics, error) {
 		fmt.Println(end)
 	}
 
+	failedR := 0
+	successMap := make(map[string]int)
+	failedMap := make(map[string]int)
+
 	for item := range channel {
+		if item.Failed {
+			// Failed Requests
+			failedR++
+			failedMap[strconv.Itoa(item.StatusCode)]++
+		} else {
+			successMap[strconv.Itoa(item.StatusCode)]++
+			bodySize = append(bodySize, float64(item.BodySize))
+			respSize = append(respSize, float64(item.ResponseSize))
+		}
 		if item.DNSLookup != 0 {
 			dnsDur = append(dnsDur, item.DNSLookup)
 		}
@@ -298,32 +321,49 @@ func (c *Cassowary) Coordinate() (ResultMetrics, error) {
 	transferMedian := calcMedian(transferDur)
 	transfer95 := calc95Percentile(transferDur)
 
+	bodyMean := calcMean(bodySize)
+	bodyMedian := calcMedian(bodySize)
+	body95 := calc95Percentile(bodySize)
+
+	respMean := calcMean(respSize)
+	respMedian := calcMedian(respSize)
+	resp95 := calc95Percentile(respSize)
+
 	// Request per second
 	reqS := requestsPerSecond(c.Requests, end)
-
-	// Failed Requests
-	failedR := failedRequests(statusCodes)
 
 	outPut := ResultMetrics{
 		BaseURL:           c.BaseURL,
 		FailedRequests:    failedR,
+		RespSuccess:       successMap,
+		RespFailed:        failedMap,
 		RequestsPerSecond: reqS,
 		TotalRequests:     c.Requests,
 		DNSMedian:         dnsMedian,
 		TCPStats: tcpStats{
 			TCPMean:   tcpMean,
 			TCPMedian: tcpMedian,
-			TCP95p:    stringToFloat(tcp95),
+			TCP95p:    tcp95,
 		},
 		ProcessingStats: serverProcessingStats{
 			ServerProcessingMean:   serverMean,
 			ServerProcessingMedian: serverMedian,
-			ServerProcessing95p:    stringToFloat(server95),
+			ServerProcessing95p:    server95,
 		},
 		ContentStats: contentTransfer{
 			ContentTransferMean:   transferMean,
 			ContentTransferMedian: transferMedian,
-			ContentTransfer95p:    stringToFloat(transfer95),
+			ContentTransfer95p:    transfer95,
+		},
+		BodySize: contentSize{
+			Mean:   bodyMean,
+			Median: bodyMedian,
+			P95:    body95,
+		},
+		RespSize: contentSize{
+			Mean:   respMean,
+			Median: respMedian,
+			P95:    resp95,
 		},
 	}
 
