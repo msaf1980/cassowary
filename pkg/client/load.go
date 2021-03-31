@@ -37,7 +37,7 @@ type durationMetrics struct {
 	ResponseSize     int64
 }
 
-func (c *Cassowary) runLoadTest(n int, outPutChan chan<- durationMetrics, g *QueryGroup) {
+func runLoadTest(c *Cassowary, outPutChan chan<- durationMetrics, g *QueryGroup) {
 	for u := range g.workerChan {
 
 		var request *http.Request
@@ -67,7 +67,7 @@ func (c *Cassowary) runLoadTest(n int, outPutChan chan<- durationMetrics, g *Que
 		for _, h := range u.RequestHeaders {
 			request.Header.Add(h[0], h[1])
 		}
-		if !g.FileMode && len(c.Groups[n].RequestHeader) == 2 {
+		if !g.FileMode && len(g.RequestHeader) == 2 {
 			request.Header.Add(g.RequestHeader[0], g.RequestHeader[1])
 		}
 
@@ -197,6 +197,11 @@ func (c *Cassowary) Coordinate() (ResultMetrics, error) {
 
 	for n := range c.Groups {
 		g := &(c.Groups[n])
+
+		if g.loadTest == nil {
+			g.loadTest = runLoadTest
+		}
+
 		if g.Requests > 0 && c.Duration > 0 && g.Delay == 0 {
 			rateLimit := int(float64(g.Requests) / float64(c.Duration.Seconds()))
 			if rateLimit <= 0 {
@@ -262,7 +267,7 @@ func (c *Cassowary) Coordinate() (ResultMetrics, error) {
 				c.wgStart.Done()
 				c.wgStart.Wait()
 				defer c.wgStop.Done()
-				c.runLoadTest(n, channel, g)
+				g.loadTest(c, channel, g)
 			}()
 		}
 

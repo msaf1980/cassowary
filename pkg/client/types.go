@@ -10,6 +10,8 @@ import (
 	"go.uber.org/ratelimit"
 )
 
+type LoadTest func(c *Cassowary, outPutChan chan<- durationMetrics, g *QueryGroup)
+
 // Validator(statusCode int, respSize int64, resp []byte, err error) (failed ool, statusCode string)
 type Validator func(int, int64, []byte, error) (bool, string)
 
@@ -19,7 +21,7 @@ type Query struct {
 	DataType       string
 	Data           []byte // Body
 	RequestHeaders [][2]string
-	Validator      Validator
+	Validator      Validator // Custom Validator function
 }
 
 type QueryGroup struct {
@@ -39,6 +41,8 @@ type QueryGroup struct {
 	Data          []byte
 	RequestHeader []string
 
+	loadTest LoadTest // Custom load test function
+
 	workerChan chan *Query
 }
 
@@ -52,6 +56,7 @@ type Cassowary struct {
 	Cloudwatch            bool
 	Histogram             bool
 	Boxplot               bool
+	StatFile              string
 	TLSConfig             *tls.Config
 	PromURL               string
 	DisableTerminalOutput bool
