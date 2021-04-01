@@ -174,13 +174,13 @@ import (
 	cassowary "github.com/rogerwelin/cassowary/pkg/client"
 )
 
-
 type URLIterator struct {
 	pos  uint64
 	data []string
+	v    Validator
 }
 
-func (it *URLIterator) Next() string {
+func (it *URLIterator) Next() *Query {
 	for {
 		pos := atomic.AddUint64(&it.pos, 1)
 		if pos > uint64(len(it.data)) {
@@ -192,7 +192,8 @@ func (it *URLIterator) Next() string {
 		} else {
 			pos--
 		}
-		return it.data[pos]
+		//return &Query{Method: "GET", URL: it.data[pos]}
+		return &Query{Method: "POST", URL: it.data[pos], DataType: "application/json", Data: []byte("{ \"test\": \"POST\" }"), Validator: it.v}
 	}
 }
 
@@ -208,10 +209,15 @@ func main() {
 
 	cass := &cassowary.Cassowary{
 		BaseURL:               "http://www.example.com",
-		ConcurrencyLevel:      2,
-		Requests:              30,
-		FileMode:	       	   true,
-		URLIterator:           it,
+		Groups: []QueryGroup{
+			{
+				Name:             "default",
+				ConcurrencyLevel:      2,
+				Requests:              30,
+				FileMode:	       	   true,
+				URLIterator:           it,
+			},
+		},
 		DisableTerminalOutput: true,
 	}
 	metrics, err := cass.Coordinate()
