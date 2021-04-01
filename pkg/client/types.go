@@ -16,6 +16,7 @@ type LoadTest func(c *Cassowary, outPutChan chan<- durationMetrics, g *QueryGrou
 type Validator func(int, int64, []byte, error) (bool, string)
 
 type Query struct {
+	Name           string
 	Method         string
 	URL            string
 	DataType       string

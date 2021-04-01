@@ -119,6 +119,7 @@ func validateCLI(c *cli.Context) error {
 	var data []byte
 	var duration time.Duration
 	var urlSuffixes []string
+	var statFile string
 	fileMode := false
 
 	if c.Int("concurrency") == 0 {
@@ -164,6 +165,8 @@ func validateCLI(c *cli.Context) error {
 		}
 		fileMode = true
 	}
+
+	statFile = c.String("stat-file")
 
 	if c.String("postfile") != "" {
 		httpMethod = "POST"
@@ -221,6 +224,7 @@ func validateCLI(c *cli.Context) error {
 		Histogram:         c.Bool("histogram"),
 		ExportMetrics:     c.Bool("json-metrics"),
 		ExportMetricsFile: c.String("json-metrics-file"),
+		StatFile:          statFile,
 		DisableKeepAlive:  c.Bool("disable-keep-alive"),
 		Timeout:           c.Int("timeout"),
 		Duration:          duration,
@@ -332,6 +336,10 @@ func runCLI(args []string) {
 				&cli.StringFlag{
 					Name:  "json-metrics-file",
 					Usage: "outputs metrics to a custom json filepath, if json-metrics is set to true",
+				},
+				&cli.StringFlag{
+					Name:  "stat-file",
+					Usage: "output file for individual query statistics",
 				},
 				&cli.BoolFlag{
 					Name:  "disable-keep-alive",

@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/tls"
@@ -10,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptrace"
+	"os"
 	"strconv"
 	"time"
 
@@ -22,7 +24,9 @@ import (
 )
 
 type durationMetrics struct {
+	Started          time.Time
 	Group            string
+	Label            string
 	Method           string
 	URL              string
 	DNSLookup        float64
@@ -35,6 +39,7 @@ type durationMetrics struct {
 	TotalDuration    float64
 	BodySize         int
 	ResponseSize     int64
+	ResponseType     string
 }
 
 func runLoadTest(c *Cassowary, outPutChan chan<- durationMetrics, g *QueryGroup) {
@@ -42,6 +47,7 @@ func runLoadTest(c *Cassowary, outPutChan chan<- durationMetrics, g *QueryGroup)
 
 		var request *http.Request
 		var err error
+		var contentType string
 
 		switch u.Method {
 		case "GET":
@@ -99,6 +105,8 @@ func runLoadTest(c *Cassowary, outPutChan chan<- durationMetrics, g *QueryGroup)
 		resp, err := c.Client.Do(request)
 		if err != nil {
 			log.Fatalf("%v", err)
+		} else {
+			contentType = resp.Header.Get("Content-Type")
 		}
 		var respSize int64
 		if resp != nil {
@@ -138,24 +146,30 @@ func runLoadTest(c *Cassowary, outPutChan chan<- durationMetrics, g *QueryGroup)
 		}
 
 		out := durationMetrics{
-			Group:            g.Name,
-			Method:           u.Method,
-			URL:              u.URL,
-			DNSLookup:        float64(t1.Sub(t0) / time.Millisecond), // dns lookup
-			TCPConn:          float64(t3.Sub(t1) / time.Millisecond), // tcp connection
+			Started:   t7,
+			Group:     g.Name,
+			Label:     u.Name,
+			Method:    u.Method,
+			URL:       u.URL,
+			DNSLookup: float64(t1.Sub(t0) / time.Millisecond), // dns lookup
+			//TCPConn:          float64(t3.Sub(t1) / time.Millisecond), // tcp connection
 			ServerProcessing: float64(t4.Sub(t3) / time.Millisecond), // server processing
 			ContentTransfer:  float64(t7.Sub(t4) / time.Millisecond), // content transfer
 			StatusCode:       statusCode,
 			BodySize:         len(u.Data),
 			ResponseSize:     respSize,
 			Failed:           failed,
+			ResponseType:     contentType,
 		}
 
-		if c.IsTLS {
-			out.TCPConn = float64(t2.Sub(t1) / time.Millisecond)
-			out.TLSHandshake = float64(t6.Sub(t5) / time.Millisecond) // tls handshake
-		} else {
-			out.TCPConn = float64(t3.Sub(t1) / time.Millisecond)
+		if !t1.IsZero() {
+			// new connection
+			if c.IsTLS {
+				out.TCPConn = float64(t2.Sub(t1) / time.Millisecond)
+				out.TLSHandshake = float64(t6.Sub(t5) / time.Millisecond) // tls handshake
+			} else {
+				out.TCPConn = float64(t3.Sub(t1) / time.Millisecond)
+			}
 		}
 
 		out.TotalDuration = out.DNSLookup + out.TCPConn + out.ServerProcessing + out.ContentTransfer
@@ -253,6 +267,14 @@ func (c *Cassowary) Coordinate() (ResultMetrics, error) {
 		c.Bar = progressbar.New(requests)
 	}
 
+	var fo *os.File
+	if len(c.StatFile) > 0 {
+		fo, err = os.Create(c.StatFile)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+
 	channel := make(chan durationMetrics, requests)
 
 	c.wgStart.Add(1)
@@ -325,6 +347,14 @@ func (c *Cassowary) Coordinate() (ResultMetrics, error) {
 	failedMap := make(map[string]int)
 
 	go func() {
+		var w *bufio.Writer
+		var sb bytes.Buffer
+		if fo != nil {
+			defer fo.Close()
+			w = bufio.NewWriter(fo)
+			w.WriteString("timeStamp,elapsed,label,responseCode,responseMessage,threadName,dataType,success,failureMessage,bytes,sentBytes,grpThreads,allThreads,URL,Latency,IdleTime,Connect\n")
+		}
+
 		for item := range channel {
 			if item.Failed {
 				// Failed Requests
@@ -348,6 +378,73 @@ func (c *Cassowary) Coordinate() (ResultMetrics, error) {
 			serverDur = append(serverDur, item.ServerProcessing)
 			transferDur = append(transferDur, item.ContentTransfer)
 			totalDur = append(totalDur, item.TotalDuration)
+
+			if w != nil {
+				// timeStamp
+				sb.WriteString(strconv.FormatInt(item.Started.UnixNano()/1000000, 10)) // ms
+				sb.WriteRune(',')
+				// elapsed
+				sb.WriteString(strconv.FormatFloat(item.TotalDuration, 'f', 0, 64)) // ms
+				sb.WriteRune(',')
+				// label
+				if len(item.Label) > 0 {
+					sb.WriteString(item.Label)
+				} else {
+					sb.WriteString(item.Group)
+				}
+				sb.WriteRune(',')
+				// responseCode
+				sb.WriteString(item.StatusCode)
+				sb.WriteRune(',')
+				// responseMessage
+				sb.WriteRune(',')
+				// threadName
+				sb.WriteString(item.Group)
+				sb.WriteRune(',')
+				// dataType
+				sb.WriteString(item.ResponseType)
+				sb.WriteRune(',')
+				// success
+				sb.WriteString(strconv.FormatBool(!item.Failed))
+				sb.WriteRune(',')
+				// failureMessage
+				sb.WriteRune(',')
+				// bytes
+				sb.WriteString(strconv.FormatInt(item.ResponseSize, 10))
+				sb.WriteRune(',')
+				// sentBytes
+				sb.WriteString(strconv.Itoa(item.BodySize))
+				sb.WriteRune(',')
+				// grpThreads
+				sb.WriteString(strconv.Itoa(len(c.Groups)))
+				sb.WriteRune(',')
+				//allThreads
+				sb.WriteString(strconv.Itoa(len(c.Groups)))
+				sb.WriteRune(',')
+				//URL
+				sb.WriteString(item.URL)
+				sb.WriteRune(',')
+				// Latency (transfer)
+				sb.WriteString(strconv.FormatFloat(item.ContentTransfer, 'f', 0, 64)) // ms
+				sb.WriteRune(',')
+				//IdleTime (server processing)
+				sb.WriteString(strconv.FormatFloat(item.ServerProcessing, 'f', 0, 64)) // ms
+				sb.WriteRune(',')
+				// DNS resolve, connect and tls handshake
+				sb.WriteString(strconv.FormatFloat(item.DNSLookup+item.TCPConn+item.TLSHandshake, 'f', 0, 64)) // ms
+				sb.WriteRune('\n')
+
+				if _, err := w.Write(sb.Bytes()); err != nil {
+					panic(err)
+				}
+				sb.Reset()
+			}
+		}
+
+		if w != nil {
+			if err = w.Flush(); err != nil {
+				panic(err)
+			}
 		}
 	}()
 
