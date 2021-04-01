@@ -209,8 +209,14 @@ func (c *Cassowary) Coordinate() (ResultMetrics, error) {
 		},
 	}
 
+	concurrency := 0
 	for n := range c.Groups {
 		g := &(c.Groups[n])
+
+		if g.ConcurrencyLevel < 0 {
+			g.ConcurrencyLevel = 0
+		}
+		concurrency += g.ConcurrencyLevel
 
 		if g.loadTest == nil {
 			g.loadTest = runLoadTest
@@ -251,6 +257,10 @@ func (c *Cassowary) Coordinate() (ResultMetrics, error) {
 			// 	}
 			// 	g.Requests = len(g.URLPaths)
 			// }
+		}
+
+		if concurrency == 0 {
+			log.Fatalf("Concurrency level need set for one group at least")
 		}
 
 		g.workerChan = make(chan *Query, g.ConcurrencyLevel)
