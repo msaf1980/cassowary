@@ -29,13 +29,14 @@ func runLoadTest(c *client.Cassowary) error {
 	if err != nil {
 		return err
 	}
-	client.OutPutResults(metrics)
+
 	for _, g := range c.Groups {
 		if m, ok := metricsGroup[g.Name]; ok {
 			client.OutPutResults(m)
 		}
 	}
-
+	client.OutPutResults(metrics)
+	
 	if c.ExportMetrics {
 		return client.OutPutJSON(c.ExportMetricsFile, metrics, metricsGroup)
 	}
