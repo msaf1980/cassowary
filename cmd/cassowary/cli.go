@@ -3,17 +3,14 @@ package main
 import (
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/ioutil"
 	"os"
-	"strconv"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/cloudwatch"
-	"github.com/fatih/color"
 	"github.com/msaf1980/cassowary/pkg/client"
 	"github.com/urfave/cli/v2"
 )
@@ -27,87 +24,20 @@ var (
 	errDurationValue    = errors.New("error: Duration cannot be set to 0 or negative")
 )
 
-func outPutResults(metrics client.ResultMetrics) {
-	printf(summaryTable,
-		color.CyanString(fmt.Sprintf("%.2f", metrics.ElapsedStats.Min)),
-		color.CyanString(fmt.Sprintf("%.2f", metrics.ElapsedStats.Max)),
-		color.CyanString(fmt.Sprintf("%.2f", metrics.ElapsedStats.Mean)),
-		color.CyanString(fmt.Sprintf("%.2f", metrics.ElapsedStats.Median)),
-		color.CyanString(fmt.Sprintf("%.2f", metrics.ElapsedStats.P95)),
-		color.CyanString(fmt.Sprintf("%.2f", metrics.ElapsedStats.P99)),
-		color.CyanString(fmt.Sprintf("%.2f", metrics.TCPStats.Min)),
-		color.CyanString(fmt.Sprintf("%.2f", metrics.TCPStats.Max)),
-		color.CyanString(fmt.Sprintf("%.2f", metrics.TCPStats.Mean)),
-		color.CyanString(fmt.Sprintf("%.2f", metrics.TCPStats.Median)),
-		color.CyanString(fmt.Sprintf("%.2f", metrics.TCPStats.P95)),
-		color.CyanString(fmt.Sprintf("%.2f", metrics.TCPStats.P99)),
-		color.CyanString(fmt.Sprintf("%.2f", metrics.ProcessingStats.Min)),
-		color.CyanString(fmt.Sprintf("%.2f", metrics.ProcessingStats.Max)),
-		color.CyanString(fmt.Sprintf("%.2f", metrics.ProcessingStats.Mean)),
-		color.CyanString(fmt.Sprintf("%.2f", metrics.ProcessingStats.Median)),
-		color.CyanString(fmt.Sprintf("%.2f", metrics.ProcessingStats.P95)),
-		color.CyanString(fmt.Sprintf("%.2f", metrics.ProcessingStats.P99)),
-		color.CyanString(fmt.Sprintf("%.2f", metrics.ContentStats.Min)),
-		color.CyanString(fmt.Sprintf("%.2f", metrics.ContentStats.Max)),
-		color.CyanString(fmt.Sprintf("%.2f", metrics.ContentStats.Mean)),
-		color.CyanString(fmt.Sprintf("%.2f", metrics.ContentStats.Median)),
-		color.CyanString(fmt.Sprintf("%.2f", metrics.ContentStats.P95)),
-		color.CyanString(fmt.Sprintf("%.2f", metrics.ContentStats.P99)),
-		color.CyanString(fmt.Sprintf("%.0f", metrics.BodySize.Min)),
-		color.CyanString(fmt.Sprintf("%.0f", metrics.BodySize.Max)),
-		color.CyanString(fmt.Sprintf("%.0f", metrics.BodySize.Mean)),
-		color.CyanString(fmt.Sprintf("%.0f", metrics.BodySize.Median)),
-		color.CyanString(fmt.Sprintf("%.0f", metrics.BodySize.P95)),
-		color.CyanString(fmt.Sprintf("%.0f", metrics.BodySize.P99)),
-		color.CyanString(fmt.Sprintf("%.0f", metrics.RespSize.Min)),
-		color.CyanString(fmt.Sprintf("%.0f", metrics.RespSize.Max)),
-		color.CyanString(fmt.Sprintf("%.0f", metrics.RespSize.Mean)),
-		color.CyanString(fmt.Sprintf("%.0f", metrics.RespSize.Median)),
-		color.CyanString(fmt.Sprintf("%.0f", metrics.RespSize.P95)),
-		color.CyanString(fmt.Sprintf("%.0f", metrics.RespSize.P99)),
-		color.CyanString(strconv.Itoa(metrics.TotalRequests)),
-		color.CyanString(strconv.Itoa(metrics.FailedRequests)),
-		color.CyanString(fmt.Sprintf("%.2f", metrics.DNSMedian)),
-		color.CyanString(fmt.Sprintf("%.2f", metrics.RequestsPerSecond)),
-	)
-	if len(metrics.RespSuccess) > 0 {
-		printf(color.GreenString("Success:\n"))
-		for status, count := range metrics.RespSuccess {
-			printf(color.GreenString(fmt.Sprintf("  %s: %d\n", status, count)))
-		}
-	}
-	if len(metrics.RespFailed) > 0 {
-		printf(color.RedString("Failed:\n"))
-		for status, count := range metrics.RespFailed {
-			printf(color.RedString(fmt.Sprintf("  %s: %d\n", status, count)))
-		}
-	}
-}
-
-func outPutJSON(fileName string, metrics client.ResultMetrics) error {
-	if fileName == "" {
-		// default filename for json metrics output.
-		fileName = "out.json"
-	}
-	f, err := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	enc := json.NewEncoder(f)
-	return enc.Encode(metrics)
-}
-
 func runLoadTest(c *client.Cassowary) error {
-	metrics, err := c.Coordinate()
+	metrics, metricsGroup, err := c.Coordinate()
 	if err != nil {
 		return err
 	}
-	outPutResults(metrics)
+	client.OutPutResults(metrics)
+	for _, g := range c.Groups {
+		if m, ok := metricsGroup[g.Name]; ok {
+			client.OutPutResults(m)
+		}
+	}
 
 	if c.ExportMetrics {
-		return outPutJSON(c.ExportMetricsFile, metrics)
+		return client.OutPutJSON(c.ExportMetricsFile, metrics, metricsGroup)
 	}
 
 	if c.PromExport {

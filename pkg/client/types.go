@@ -75,6 +75,7 @@ type Cassowary struct {
 
 // ResultMetrics are the aggregated metrics after the load test
 type ResultMetrics struct {
+	Name              string         `json:"name"`
 	BaseURL           string         `json:"base_url"`
 	TotalRequests     int            `json:"total_requests"`
 	FailedRequests    int            `json:"failed_requests"`

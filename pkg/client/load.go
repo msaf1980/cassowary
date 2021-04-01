@@ -23,6 +23,10 @@ import (
 	"go.uber.org/ratelimit"
 )
 
+const (
+	TotalStr = "Total"
+)
+
 type durationMetrics struct {
 	Started          time.Time
 	Group            string
@@ -180,22 +184,151 @@ func runLoadTest(c *Cassowary, outPutChan chan<- durationMetrics, g *QueryGroup)
 	}
 }
 
-// Coordinate bootstraps the load test based on values in Cassowary struct
-func (c *Cassowary) Coordinate() (ResultMetrics, error) {
-	var dnsDur []float64
-	var tcpDur []float64
-	var tlsDur []float64
-	var serverDur []float64
-	var transferDur []float64
-	var totalDur []float64
-	var bodySize []float64
-	var respSize []float64
+type stat struct {
+	dnsDur      []float64
+	tlsDur      []float64
+	tcpDur      []float64
+	serverDur   []float64
+	transferDur []float64
+	totalDur    []float64
+	bodySize    []float64
+	respSize    []float64
 
+	failedR    int
+	totalR     int
+	successMap map[string]int
+	failedMap  map[string]int
+}
+
+func statInit(s *stat) {
+	s.dnsDur = make([]float64, 0)
+	s.tlsDur = make([]float64, 0)
+	s.tcpDur = make([]float64, 0)
+	s.serverDur = make([]float64, 0)
+	s.transferDur = make([]float64, 0)
+	s.totalDur = make([]float64, 0)
+	s.bodySize = make([]float64, 0)
+	s.respSize = make([]float64, 0)
+
+	s.successMap = make(map[string]int)
+	s.failedMap = make(map[string]int)
+}
+
+func saveStat(name string, baseURL string, end time.Duration, s *stat) ResultMetrics {
+	// Request per second
+	reqS := requestsPerSecond(s.totalR, end)
+
+	// DNS
+	dnsMedian := calcMedian(s.dnsDur)
+
+	// Elapsed (total)
+	elapsedMin, elapsedMax, elapsedMean := calcStat(s.totalDur)
+	elapsedMedian := calcMedian(s.totalDur)
+	elapsed95 := calc95Percentile(s.totalDur)
+	elapsed99 := calc99Percentile(s.totalDur)
+
+	// TCP
+	tcpMin, tcpMax, tcpMean := calcStat(s.tcpDur)
+	tcpMedian := calcMedian(s.tcpDur)
+	tcp95 := calc95Percentile(s.tcpDur)
+	tcp99 := calc99Percentile(s.tcpDur)
+
+	// Server Processing
+	serverMin, serverMax, serverMean := calcStat(s.serverDur)
+	serverMedian := calcMedian(s.serverDur)
+	server95 := calc95Percentile(s.serverDur)
+	server99 := calc99Percentile(s.serverDur)
+
+	// Content Transfer
+	transferMin, transferMax, transferMean := calcStat(s.transferDur)
+	transferMedian := calcMedian(s.transferDur)
+	transfer95 := calc95Percentile(s.transferDur)
+	transfer99 := calc99Percentile(s.transferDur)
+
+	bodyMin, bodyMax, bodyMean := calcStat(s.bodySize)
+	bodyMedian := calcMedian(s.bodySize)
+	body95 := calc95Percentile(s.bodySize)
+	body99 := calc99Percentile(s.bodySize)
+
+	respMin, respMax, respMean := calcStat(s.respSize)
+	respMedian := calcMedian(s.respSize)
+	resp95 := calc95Percentile(s.respSize)
+	resp99 := calc99Percentile(s.respSize)
+
+	outPut := ResultMetrics{
+		Name:              name,
+		BaseURL:           baseURL,
+		RespSuccess:       s.successMap,
+		RespFailed:        s.failedMap,
+		RequestsPerSecond: reqS,
+		TotalRequests:     s.totalR,
+		FailedRequests:    s.failedR,
+		DNSMedian:         dnsMedian,
+		ElapsedStats: stats{
+			Min:    elapsedMin,
+			Max:    elapsedMax,
+			Mean:   elapsedMean,
+			Median: elapsedMedian,
+			P95:    elapsed95,
+			P99:    elapsed99,
+		},
+		TCPStats: stats{
+			Min:    tcpMin,
+			Max:    tcpMax,
+			Mean:   tcpMean,
+			Median: tcpMedian,
+			P95:    tcp95,
+			P99:    tcp99,
+		},
+		ProcessingStats: stats{
+			Min:    serverMin,
+			Max:    serverMax,
+			Mean:   serverMean,
+			Median: serverMedian,
+			P95:    server95,
+			P99:    server99,
+		},
+		ContentStats: stats{
+			Min:    transferMin,
+			Max:    transferMax,
+			Mean:   transferMean,
+			Median: transferMedian,
+			P95:    transfer95,
+			P99:    transfer99,
+		},
+		BodySize: stats{
+			Min:    bodyMin,
+			Max:    bodyMax,
+			Mean:   bodyMean,
+			Median: bodyMedian,
+			P95:    body95,
+			P99:    body99,
+		},
+		RespSize: stats{
+			Min:    respMin,
+			Max:    respMax,
+			Mean:   respMean,
+			Median: respMedian,
+			P95:    resp95,
+			P99:    resp99,
+		},
+	}
+
+	return outPut
+}
+
+// Coordinate bootstraps the load test based on values in Cassowary struct
+func (c *Cassowary) Coordinate() (ResultMetrics, map[string]ResultMetrics, error) {
 	var requests int
+
+	var statTotal stat
+	stats := make(map[string]*stat)
+
+	result := make(map[string]ResultMetrics)
 
 	tls, err := isTLS(c.BaseURL)
 	if err != nil {
-		return ResultMetrics{}, err
+		return ResultMetrics{}, map[string]ResultMetrics{}, err
 	}
 	c.IsTLS = tls
 
@@ -210,11 +343,16 @@ func (c *Cassowary) Coordinate() (ResultMetrics, error) {
 	}
 
 	concurrency := 0
+	statInit(&statTotal)
 	for n := range c.Groups {
 		g := &(c.Groups[n])
 
-		if g.ConcurrencyLevel < 0 {
+		if g.ConcurrencyLevel <= 0 {
 			g.ConcurrencyLevel = 0
+		} else {
+			s := &stat{}
+			statInit(s)
+			stats[g.Name] = s
 		}
 		concurrency += g.ConcurrencyLevel
 
@@ -249,7 +387,7 @@ func (c *Cassowary) Coordinate() (ResultMetrics, error) {
 
 		if g.FileMode {
 			if (len(g.URLPaths) > 0 && g.URLIterator != nil) || (len(g.URLPaths) == 0 && g.URLIterator == nil) {
-				return ResultMetrics{}, fmt.Errorf("use URLPaths or URLIterator in FileMode for %s group", g.Name)
+				log.Fatalf("use URLPaths or URLIterator in FileMode for %s group", g.Name)
 			}
 			// if len(g.URLPaths) > 0 {
 			// 	if g.Requests > len(g.URLPaths) {
@@ -351,11 +489,6 @@ func (c *Cassowary) Coordinate() (ResultMetrics, error) {
 		}()
 	}
 
-	failedR := 0
-	totalR := 0
-	successMap := make(map[string]int)
-	failedMap := make(map[string]int)
-
 	go func() {
 		var w *bufio.Writer
 		var sb bytes.Buffer
@@ -366,28 +499,47 @@ func (c *Cassowary) Coordinate() (ResultMetrics, error) {
 		}
 
 		for item := range channel {
+			s := stats[item.Group]
 			if item.Failed {
 				// Failed Requests
-				failedR++
-				failedMap[item.StatusCode]++
+				statTotal.failedR++
+				statTotal.failedMap[item.StatusCode]++
+
+				s.failedR++
+				s.failedMap[item.StatusCode]++
 			} else {
-				successMap[item.StatusCode]++
-				bodySize = append(bodySize, float64(item.BodySize))
-				respSize = append(respSize, float64(item.ResponseSize))
+				statTotal.successMap[item.StatusCode]++
+				statTotal.bodySize = append(s.bodySize, float64(item.BodySize))
+				statTotal.respSize = append(s.respSize, float64(item.ResponseSize))
+
+				s.successMap[item.StatusCode]++
+				s.bodySize = append(s.bodySize, float64(item.BodySize))
+				s.respSize = append(s.respSize, float64(item.ResponseSize))
 			}
-			totalR++
 			if item.DNSLookup != 0 {
-				dnsDur = append(dnsDur, item.DNSLookup)
+				s.dnsDur = append(s.dnsDur, item.DNSLookup)
+
+				statTotal.dnsDur = append(statTotal.dnsDur, item.DNSLookup)
 			}
-			if item.TCPConn < 1000 {
-				tcpDur = append(tcpDur, item.TCPConn)
+			if item.TCPConn != 0 {
+				s.tcpDur = append(s.tcpDur, item.TCPConn)
+
+				statTotal.tcpDur = append(statTotal.tcpDur, item.TCPConn)
 			}
 			if c.IsTLS {
-				tlsDur = append(tlsDur, item.TLSHandshake)
+				s.tlsDur = append(s.tlsDur, item.TLSHandshake)
+
+				statTotal.tlsDur = append(statTotal.tlsDur, item.TLSHandshake)
 			}
-			serverDur = append(serverDur, item.ServerProcessing)
-			transferDur = append(transferDur, item.ContentTransfer)
-			totalDur = append(totalDur, item.TotalDuration)
+			s.serverDur = append(s.serverDur, item.ServerProcessing)
+			s.transferDur = append(s.transferDur, item.ContentTransfer)
+			s.totalDur = append(s.totalDur, item.TotalDuration)
+			s.totalR++
+
+			statTotal.serverDur = append(statTotal.serverDur, item.ServerProcessing)
+			statTotal.transferDur = append(statTotal.transferDur, item.ContentTransfer)
+			statTotal.totalDur = append(statTotal.totalDur, item.TotalDuration)
+			statTotal.totalR++
 
 			if w != nil {
 				// timeStamp
@@ -468,116 +620,30 @@ func (c *Cassowary) Coordinate() (ResultMetrics, error) {
 		fmt.Println(end)
 	}
 
-	// DNS
-	dnsMedian := calcMedian(dnsDur)
+	for _, g := range c.Groups {
+		if g.ConcurrencyLevel < 1 {
+			continue
+		}
 
-	// Elapsed (total)
-	elapsedMin, elapsedMax, elapsedMean := calcStat(totalDur)
-	elapsedMedian := calcMedian(totalDur)
-	elapsed95 := calc95Percentile(totalDur)
-	elapsed99 := calc99Percentile(totalDur)
-
-	// TCP
-	tcpMin, tcpMax, tcpMean := calcStat(tcpDur)
-	tcpMedian := calcMedian(tcpDur)
-	tcp95 := calc95Percentile(tcpDur)
-	tcp99 := calc99Percentile(tcpDur)
-
-	// Server Processing
-	serverMin, serverMax, serverMean := calcStat(serverDur)
-	serverMedian := calcMedian(serverDur)
-	server95 := calc95Percentile(serverDur)
-	server99 := calc99Percentile(serverDur)
-
-	// Content Transfer
-	transferMin, transferMax, transferMean := calcStat(transferDur)
-	transferMedian := calcMedian(transferDur)
-	transfer95 := calc95Percentile(transferDur)
-	transfer99 := calc99Percentile(transferDur)
-
-	bodyMin, bodyMax, bodyMean := calcStat(bodySize)
-	bodyMedian := calcMedian(bodySize)
-	body95 := calc95Percentile(bodySize)
-	body99 := calc99Percentile(bodySize)
-
-	respMin, respMax, respMean := calcStat(respSize)
-	respMedian := calcMedian(respSize)
-	resp95 := calc95Percentile(respSize)
-	resp99 := calc99Percentile(respSize)
-
-	// Request per second
-	reqS := requestsPerSecond(totalR, end)
-
-	outPut := ResultMetrics{
-		BaseURL:           c.BaseURL,
-		FailedRequests:    failedR,
-		RespSuccess:       successMap,
-		RespFailed:        failedMap,
-		RequestsPerSecond: reqS,
-		TotalRequests:     totalR,
-		DNSMedian:         dnsMedian,
-		ElapsedStats: stats{
-			Min:    elapsedMin,
-			Max:    elapsedMax,
-			Mean:   elapsedMean,
-			Median: elapsedMedian,
-			P95:    elapsed95,
-			P99:    elapsed99,
-		},
-		TCPStats: stats{
-			Min:    tcpMin,
-			Max:    tcpMax,
-			Mean:   tcpMean,
-			Median: tcpMedian,
-			P95:    tcp95,
-			P99:    tcp99,
-		},
-		ProcessingStats: stats{
-			Min:    serverMin,
-			Max:    serverMax,
-			Mean:   serverMean,
-			Median: serverMedian,
-			P95:    server95,
-			P99:    server99,
-		},
-		ContentStats: stats{
-			Min:    transferMin,
-			Max:    transferMax,
-			Mean:   transferMean,
-			Median: transferMedian,
-			P95:    transfer95,
-			P99:    transfer99,
-		},
-		BodySize: stats{
-			Min:    bodyMin,
-			Max:    bodyMax,
-			Mean:   bodyMean,
-			Median: bodyMedian,
-			P95:    body95,
-			P99:    body99,
-		},
-		RespSize: stats{
-			Min:    respMin,
-			Max:    respMax,
-			Mean:   respMean,
-			Median: respMedian,
-			P95:    resp95,
-			P99:    resp99,
-		},
+		if s, ok := stats[g.Name]; ok {
+			result[g.Name] = saveStat(g.Name, c.BaseURL, end, s)
+		}
 	}
+
+	resultTotal := saveStat(TotalStr, c.BaseURL, end, &statTotal)
 
 	// output histogram
 	if c.Histogram {
-		err := c.PlotHistogram(totalDur)
+		err := c.PlotHistogram(statTotal.totalDur)
 		if err != nil {
 		}
 	}
 
 	// output boxplot
 	if c.Boxplot {
-		err := c.PlotBoxplot(totalDur)
+		err := c.PlotBoxplot(statTotal.totalDur)
 		if err != nil {
 		}
 	}
-	return outPut, nil
+	return resultTotal, result, nil
 }
