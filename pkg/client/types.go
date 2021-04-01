@@ -75,40 +75,26 @@ type Cassowary struct {
 
 // ResultMetrics are the aggregated metrics after the load test
 type ResultMetrics struct {
-	BaseURL           string                `json:"base_url"`
-	TotalRequests     int                   `json:"total_requests"`
-	FailedRequests    int                   `json:"failed_requests"`
-	RespSuccess       map[string]int        `json:"responses_success"`
-	RespFailed        map[string]int        `json:"responses_failed"`
-	RequestsPerSecond float64               `json:"requests_per_second"`
-	DNSMedian         float64               `json:"dns_median"`
-	TCPStats          tcpStats              `json:"tcp_connect"`
-	ProcessingStats   serverProcessingStats `json:"server_processing"`
-	ContentStats      contentTransfer       `json:"content_transfer"`
-	BodySize          contentSize           `json:"body_size"`
-	RespSize          contentSize           `json:"resp_size"`
+	BaseURL           string         `json:"base_url"`
+	TotalRequests     int            `json:"total_requests"`
+	FailedRequests    int            `json:"failed_requests"`
+	RespSuccess       map[string]int `json:"responses_success"`
+	RespFailed        map[string]int `json:"responses_failed"`
+	RequestsPerSecond float64        `json:"requests_per_second"`
+	DNSMedian         float64        `json:"dns_median"`
+	ElapsedStats      stats          `json:"elapsed"`
+	TCPStats          stats          `json:"tcp_connect"`
+	ProcessingStats   stats          `json:"server_processing"`
+	ContentStats      stats          `json:"content_transfer"`
+	BodySize          stats          `json:"body_size"`
+	RespSize          stats          `json:"resp_size"`
 }
 
-type tcpStats struct {
-	TCPMean   float64 `json:"mean"`
-	TCPMedian float64 `json:"median"`
-	TCP95p    float64 `json:"95th_percentile"`
-}
-
-type serverProcessingStats struct {
-	ServerProcessingMean   float64 `json:"mean"`
-	ServerProcessingMedian float64 `json:"median"`
-	ServerProcessing95p    float64 `json:"95th_percentile"`
-}
-
-type contentTransfer struct {
-	ContentTransferMean   float64 `json:"mean"`
-	ContentTransferMedian float64 `json:"median"`
-	ContentTransfer95p    float64 `json:"95th_percentile"`
-}
-
-type contentSize struct {
+type stats struct {
+	Min    float64 `json:"min"`
+	Max    float64 `json:"max"`
 	Mean   float64 `json:"mean"`
 	Median float64 `json:"median"`
-	P95    float64 `json:"95th_percentile"`
+	P95    float64 `json:"P95"`
+	P99    float64 `json:"P99"`
 }

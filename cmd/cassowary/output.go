@@ -7,18 +7,19 @@ import (
 )
 
 const (
-	summaryTable = `` + "\n\n" +
-		` TCP Connect.....................: Avg/mean=%sms ` + "\t" + `Median=%sms` + "\t" + `p(95)=%sms` + "\n" +
-		` Server Processing...............: Avg/mean=%sms ` + "\t" + `Median=%sms` + "\t" + `p(95)=%sms` + "\n" +
-		` Content Transfer................: Avg/mean=%sms ` + "\t" + `Median=%sms` + "\t" + `p(95)=%sms` + "\n" +
-		` Body Size.......................: Avg/mean=%s bytes ` + "\t" + `Median=%s bytes` + "\t" + `p(95)=%s bytes` + "\n" +
-		` Response Size...................: Avg/mean=%s bytes ` + "\t" + `Median=%s bytes` + "\t" + `p(95)=%s bytes` + "\n" +
-		`` + "\n" +
-		`Summary: ` + "\n" +
-		` Total Req.......................: %s` + "\n" +
-		` Failed Req......................: %s` + "\n" +
-		` DNS Lookup......................: %sms` + "\n" +
-		` Req/s...........................: %s` + "\n\n"
+	summaryTable = "\n" +
+		" Elapsed(ms)............: Min=%s\tMax=%s\tAvg=%s\tMedian=%s\tp(95)=%s\tp(99)=%s\n" +
+		" TCP Connect(ms)........: Min=%s\tMax=%s\tAvg=%s\tMedian=%s\tp(95)=%s\tp(99)=%s\n" +
+		" Server Processing(ms)..: Min=%s\tMax=%s\tAvg=%s\tMedian=%s\tp(95)=%s\tp(99)=%s\n" +
+		" Content Transfer.......: Min=%s\tMax=%s\tAvg=%s\tMedian=%s\tp(95)=%s\tp(99)=%s\n" +
+		" Body Size(bytes).......: Min=%s\tMax=%s\tAvg=%s\tMedian=%s\tp(95)=%s\tp(99)=%s\n" +
+		" Response Size(bytes)...: Min=%s\tMax=%s\tAvg=%s\tMedian=%s\tp(95)=%s\tp(99)=%s\n" +
+		"\n" +
+		"Summary:\n" +
+		" Total Req.......................: %s\n" +
+		" Failed Req......................: %s\n" +
+		" DNS Lookup......................: %sms\n" +
+		" Req/s...........................: %s\n\n"
 )
 
 func printf(format string, a ...interface{}) {

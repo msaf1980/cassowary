@@ -471,28 +471,39 @@ func (c *Cassowary) Coordinate() (ResultMetrics, error) {
 	// DNS
 	dnsMedian := calcMedian(dnsDur)
 
+	// Elapsed (total)
+	elapsedMin, elapsedMax, elapsedMean := calcStat(totalDur)
+	elapsedMedian := calcMedian(totalDur)
+	elapsed95 := calc95Percentile(totalDur)
+	elapsed99 := calc99Percentile(totalDur)
+
 	// TCP
-	tcpMean := calcMean(tcpDur)
+	tcpMin, tcpMax, tcpMean := calcStat(tcpDur)
 	tcpMedian := calcMedian(tcpDur)
 	tcp95 := calc95Percentile(tcpDur)
+	tcp99 := calc99Percentile(tcpDur)
 
 	// Server Processing
-	serverMean := calcMean(serverDur)
+	serverMin, serverMax, serverMean := calcStat(serverDur)
 	serverMedian := calcMedian(serverDur)
 	server95 := calc95Percentile(serverDur)
+	server99 := calc99Percentile(serverDur)
 
 	// Content Transfer
-	transferMean := calcMean(transferDur)
+	transferMin, transferMax, transferMean := calcStat(transferDur)
 	transferMedian := calcMedian(transferDur)
 	transfer95 := calc95Percentile(transferDur)
+	transfer99 := calc99Percentile(transferDur)
 
-	bodyMean := calcMean(bodySize)
+	bodyMin, bodyMax, bodyMean := calcStat(bodySize)
 	bodyMedian := calcMedian(bodySize)
 	body95 := calc95Percentile(bodySize)
+	body99 := calc99Percentile(bodySize)
 
-	respMean := calcMean(respSize)
+	respMin, respMax, respMean := calcStat(respSize)
 	respMedian := calcMedian(respSize)
 	resp95 := calc95Percentile(respSize)
+	resp99 := calc99Percentile(respSize)
 
 	// Request per second
 	reqS := requestsPerSecond(totalR, end)
@@ -505,30 +516,53 @@ func (c *Cassowary) Coordinate() (ResultMetrics, error) {
 		RequestsPerSecond: reqS,
 		TotalRequests:     totalR,
 		DNSMedian:         dnsMedian,
-		TCPStats: tcpStats{
-			TCPMean:   tcpMean,
-			TCPMedian: tcpMedian,
-			TCP95p:    tcp95,
+		ElapsedStats: stats{
+			Min:    elapsedMin,
+			Max:    elapsedMax,
+			Mean:   elapsedMean,
+			Median: elapsedMedian,
+			P95:    elapsed95,
+			P99:    elapsed99,
 		},
-		ProcessingStats: serverProcessingStats{
-			ServerProcessingMean:   serverMean,
-			ServerProcessingMedian: serverMedian,
-			ServerProcessing95p:    server95,
+		TCPStats: stats{
+			Min:    tcpMin,
+			Max:    tcpMax,
+			Mean:   tcpMean,
+			Median: tcpMedian,
+			P95:    tcp95,
+			P99:    tcp99,
 		},
-		ContentStats: contentTransfer{
-			ContentTransferMean:   transferMean,
-			ContentTransferMedian: transferMedian,
-			ContentTransfer95p:    transfer95,
+		ProcessingStats: stats{
+			Min:    serverMin,
+			Max:    serverMax,
+			Mean:   serverMean,
+			Median: serverMedian,
+			P95:    server95,
+			P99:    server99,
 		},
-		BodySize: contentSize{
+		ContentStats: stats{
+			Min:    transferMin,
+			Max:    transferMax,
+			Mean:   transferMean,
+			Median: transferMedian,
+			P95:    transfer95,
+			P99:    transfer99,
+		},
+		BodySize: stats{
+			Min:    bodyMin,
+			Max:    bodyMax,
 			Mean:   bodyMean,
 			Median: bodyMedian,
 			P95:    body95,
+			P99:    body99,
 		},
-		RespSize: contentSize{
+		RespSize: stats{
+			Min:    respMin,
+			Max:    respMax,
 			Mean:   respMean,
 			Median: respMedian,
 			P95:    resp95,
+			P99:    resp99,
 		},
 	}
 
