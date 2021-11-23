@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"sync/atomic"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestLoadCoordinate(t *testing.T) {
@@ -30,7 +32,7 @@ func TestLoadCoordinate(t *testing.T) {
 		DisableTerminalOutput: true,
 	}
 
-	metrics, err := cass.Coordinate()
+	metrics, metricsGroups, err := cass.Coordinate()
 	if err != nil {
 		t.Error(err)
 	}
@@ -46,6 +48,17 @@ func TestLoadCoordinate(t *testing.T) {
 	if metrics.FailedRequests != 0 {
 		t.Errorf("Wanted %d but got %d", 0, metrics.FailedRequests)
 	}
+
+	metricsGroupsWant := map[string]ResultMetrics{
+		"default": {
+			Name: "default", BaseURL: srv.URL, TotalRequests: metrics.TotalRequests, FailedRequests: 0,
+			RequestsPerSecond: metrics.RequestsPerSecond, // flapping value
+			RespSuccess:       map[string]int{"200": metrics.TotalRequests},
+			RespFailed:        map[string]int{},
+			RespSize:          stats{Min: 2, Max: 2, Mean: 2, Median: 2, P95: 2, P99: 2},
+		},
+	}
+	assert.EqualValues(t, metricsGroupsWant, metricsGroups)
 }
 
 func TestLoadCoordinateURLPaths(t *testing.T) {
@@ -68,7 +81,7 @@ func TestLoadCoordinateURLPaths(t *testing.T) {
 		},
 		DisableTerminalOutput: true,
 	}
-	metrics, err := cass.Coordinate()
+	metrics, _, err := cass.Coordinate()
 	if err != nil {
 		t.Error(err)
 	}
@@ -144,7 +157,7 @@ func TestLoadCoordinateURLIterator(t *testing.T) {
 		},
 		DisableTerminalOutput: true,
 	}
-	metrics, err := cass.Coordinate()
+	metrics, metricsGroups, err := cass.Coordinate()
 	if err != nil {
 		t.Error(err)
 	}
@@ -170,6 +183,18 @@ func TestLoadCoordinateURLIterator(t *testing.T) {
 	if len(metrics.RespFailed) != 0 {
 		t.Errorf("Wanted 0 total failed, but got %d", len(metrics.RespFailed))
 	}
+
+	metricsGroupsWant := map[string]ResultMetrics{
+		"group_1": {
+			Name: "group_1", BaseURL: srv.URL, TotalRequests: metrics.TotalRequests, FailedRequests: 0,
+			RequestsPerSecond: metrics.RequestsPerSecond, // flapping value
+			BodySize:          metrics.BodySize,
+			RespSuccess:       map[string]int{"200": metrics.TotalRequests},
+			RespFailed:        map[string]int{},
+			RespSize:          stats{Min: 2, Max: 2, Mean: 2, Median: 2, P95: 2, P99: 2},
+		},
+	}
+	assert.EqualValues(t, metricsGroupsWant, metricsGroups)
 }
 
 func respHTTPValidator(statusCode int, respSize int64, resp []byte, err error) (bool, string) {
@@ -211,7 +236,7 @@ func TestLoadCoordinateURLIteratorWithValidator(t *testing.T) {
 		},
 		DisableTerminalOutput: true,
 	}
-	metrics, err := cass.Coordinate()
+	metrics, metricsGroups, err := cass.Coordinate()
 	if err != nil {
 		t.Error(err)
 	}
@@ -237,6 +262,17 @@ func TestLoadCoordinateURLIteratorWithValidator(t *testing.T) {
 	} else {
 		t.Errorf("Wanted %d total failed status code, but got %d", metrics.FailedRequests, 0)
 	}
+
+	metricsGroupsWant := map[string]ResultMetrics{
+		"default": {
+			Name: "default", BaseURL: srv.URL, TotalRequests: metrics.TotalRequests, FailedRequests: metrics.TotalRequests,
+			RequestsPerSecond: metrics.RequestsPerSecond, // flapping value
+			BodySize:          metrics.BodySize,
+			RespSuccess:       map[string]int{},
+			RespFailed:        map[string]int{"503": metrics.TotalRequests},
+		},
+	}
+	assert.EqualValues(t, metricsGroupsWant, metricsGroups)
 }
 
 func TestCoordinateTLSConfig(t *testing.T) {
@@ -288,7 +324,7 @@ func TestCoordinateTLSConfig(t *testing.T) {
 		DisableTerminalOutput: true,
 	}
 
-	metrics, err := cass.Coordinate()
+	metrics, _, err := cass.Coordinate()
 	if err != nil {
 		t.Error(err)
 	}
